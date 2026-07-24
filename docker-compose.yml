@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # 1. MySQL 資料庫
+  db:
+    image: mysql:8.0
+    container_name: saas_mysql
+    restart: always
+    environment:
+      MYSQL_DATABASE: saas_db
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_USER: saas_user
+      MYSQL_PASSWORD: saas_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # 2. Redis (用於分散式鎖)
+  redis:
+    image: redis:7-alpine
+    container_name: saas_redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # 3. RabbitMQ (用於 Celery 異步佇列)
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: saas_rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"    # AMQP 協定端口, 這是 RabbitMQ 的資料傳輸通道
+      - "15672:15672"  # Web 管理介面端口 (帳密預設: guest / guest)
+
+volumes:
+  mysql_data:
