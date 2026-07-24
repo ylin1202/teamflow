@@ -43,6 +43,10 @@ class User(AbstractUser):
         editable=False
     )
     email = models.EmailField(_("email address"), unique=True)
+    
+    # 補上建立與更新時間戳記
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
@@ -95,6 +99,7 @@ class OrganizationRole(models.TextChoices):
 class OrganizationMember(BaseModel):
     """
     User 與 Organization 的多對多中間表，實作 RBAC 權限控管
+    (繼承 BaseModel 即可擁有 created_at 作為加入時間)
     """
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -103,7 +108,6 @@ class OrganizationMember(BaseModel):
         choices=OrganizationRole.choices, 
         default=OrganizationRole.MEMBER
     )
-    joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "saas_organization_member"
@@ -131,9 +135,11 @@ class Subscription(BaseModel):
         Organization, on_delete=models.CASCADE, related_name="subscription"
     )
     
-    # Stripe 相關識別碼
-    stripe_subscription_id = models.CharField(max_length=255, unique=True, db_index=True)
-    stripe_price_id = models.CharField(max_length=255)
+    # Stripe 相關識別碼 (初始化或未付費前允許 null)
+    stripe_subscription_id = models.CharField(
+        max_length=255, unique=True, null=True, blank=True, db_index=True
+    )
+    stripe_price_id = models.CharField(max_length=255, null=True, blank=True)
     
     status = models.CharField(
         max_length=20, 
@@ -144,8 +150,8 @@ class Subscription(BaseModel):
     # 商業 API 配額（提供給 Redis Rate Limiter 讀取與驗證）
     monthly_api_quota = models.IntegerField(default=1000, help_text="當月可用 API 配額")
     
-    current_period_start = models.DateTimeField()
-    current_period_end = models.DateTimeField()
+    current_period_start = models.DateTimeField(null=True, blank=True)
+    current_period_end = models.DateTimeField(null=True, blank=True)
     cancel_at_period_end = models.BooleanField(default=False)
 
     class Meta:
