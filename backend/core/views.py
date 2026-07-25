@@ -7,6 +7,9 @@ from rest_framework import viewsets, exceptions
 from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
 from core.services.stripe_service import StripeWebhookService
 
+from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from dj_rest_auth.registration.views import SocialLoginView
+
 
 @csrf_exempt
 @require_POST
@@ -43,6 +46,16 @@ def stripe_webhook_view(request):
         return JsonResponse({"status": "success"}, status=200)
     except Exception as e:
         return JsonResponse({"error": "Internal server error"}, status=500)
+    
+
+class GoogleLoginView(SocialLoginView):
+    """
+    接收前端 NextAuth 傳來的 Google Access Token
+    1. 驗證 token 是否合規
+    2. 首次登入自動創建 User 與預設 Organization (觸發 signal)
+    3. 核發 JWT Token 回傳給前端
+    """
+    adapter_class = GoogleOAuth2Adapter
     
 
 class TenantBaseViewSet(viewsets.ModelViewSet):
