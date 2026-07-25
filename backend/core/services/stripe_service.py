@@ -1,4 +1,4 @@
-import time
+import time, os
 import logging
 from django.db import transaction
 from django.conf import settings
@@ -8,9 +8,8 @@ from core.models import StripeEventLog, Subscription, Organization, Subscription
 
 logger = logging.getLogger(__name__)
 
-# 建立 Redis 連線實例
-redis_client = Redis.from_url(getattr(settings, "REDIS_URL", "redis://localhost:6379/0"))
-
+REDIS_URL = getattr(settings, "REDIS_URL", "redis://redis:6379/0")
+redis_client = Redis.from_url(REDIS_URL)
 
 class StripeWebhookService:
     """
@@ -20,7 +19,7 @@ class StripeWebhookService:
     3. 使用 transaction.atomic() 確保金流狀態更新之原子性
     """
 
-    LOCK_EXPIRE_SECONDS = 30  # 分散式鎖過期時間
+    LOCK_EXPIRE_SECONDS = 60  # 分散式鎖過期時間
 
     @classmethod
     def handle_event(cls, event_data: dict) -> bool:

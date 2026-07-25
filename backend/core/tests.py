@@ -49,7 +49,7 @@ class SaasBackendTests(APITestCase):
         self.client.force_authenticate(user=self.user_a)
 
         # 取得 API 網址
-        url = reverse("stripe-webhook") # 實務上可替換為 /api/projects/ 等 API
+        url = reverse("stripe_webhook") # 實務上可替換為 /api/projects/ 等 API
 
         # User A 發起請求，但在 Header 故意偽造別人的 ID (HTTP_X_ORGANIZATION_ID = Company B 的 ID)
         response = self.client.get(url, HTTP_X_ORGANIZATION_ID=str(self.org_b.id))

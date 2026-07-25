@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -59,10 +60,14 @@ INSTALLED_APPS = [
 SITE_ID = 1
 
 # 帳號驗證策略設定 (關閉一般帳密，強制使用 Google 登入)
-ACCOUNT_EMAIL_REQUIRED = True         # 註冊時必須提供 Email
-ACCOUNT_USERNAME_REQUIRED = False      # 不強制要求 Username (改以 Email 為主要識別)
-ACCOUNT_AUTHENTICATION_METHOD = 'email' # 使用 Email 進行身份驗證
-SOCIALACCOUNT_QUERY_EMAIL = True       # 向 Google 請求使用者 Email 權限
+ACCOUNT_LOGIN_METHODS = {'email'}   # 登入識別欄位採用 Email
+ACCOUNT_SIGNUP_FIELDS = ['email*'] # 註冊必填欄位 (新版 allauth 語法)
+SOCIALACCOUNT_QUERY_EMAIL = True     # 向 Google 授權頁面請求使用者 Email 權限
+
+# 徹底關閉一般帳密註冊與郵件驗證 (全權交給 Google 驗證身分)
+ACCOUNT_EMAIL_VERIFICATION = 'none'  # 不需寄送信箱驗證信 (Google 已驗證過 email)
+SOCIALACCOUNT_AUTO_SIGNUP = True     # 使用者第一次用 Google 登入時，自動建立帳號，不跳出二次確認表單
+ACCOUNT_ALLOW_REGISTRATION = False   # 關閉傳統 Django 帳密註冊表單 (預防駭客直接 Post 一般註冊 API)
 
 
 # Google OAuth 2.0 憑證與 Scope 設定 (透過環境變數保護 Client ID 與 Secret)
@@ -93,6 +98,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "allauth.account.middleware.AccountMiddleware",
 ]
 
 # 允許 Next.js 前端 3000 Port 存取
@@ -137,6 +143,8 @@ DATABASES = {
     }
 }
 
+SILENCED_SYSTEM_CHECKS = ['models.W036']
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -178,12 +186,7 @@ STATIC_URL = 'static/'
 AUTH_USER_MODEL = "core.User"
 
 
-# -----------------------------------------
-import os
-
-# ==========================================
 # Celery & RabbitMQ 訊息佇列設定
-# ==========================================
 RABBITMQ_USER = os.getenv("RABBITMQ_DEFAULT_USER", "guest")
 RABBITMQ_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "guest")
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
