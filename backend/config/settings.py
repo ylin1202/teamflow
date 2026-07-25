@@ -37,13 +37,51 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
-    # Third party
+    
+    # DRF & Auth
     'rest_framework',
+    'rest_framework.authtoken',
+    'dj_rest_auth',
+    
+    # Allauth & OAuth Providers
+    'django.contrib.sites',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google', # Google Provider
     
     # Local apps
     'core',
 ]
+
+# django.contrib.sites 所需的預設站台 ID
+SITE_ID = 1
+
+# 帳號驗證策略設定 (關閉一般帳密，強制使用 Google 登入)
+ACCOUNT_EMAIL_REQUIRED = True         # 註冊時必須提供 Email
+ACCOUNT_USERNAME_REQUIRED = False      # 不強制要求 Username (改以 Email 為主要識別)
+ACCOUNT_AUTHENTICATION_METHOD = 'email' # 使用 Email 進行身份驗證
+SOCIALACCOUNT_QUERY_EMAIL = True       # 向 Google 請求使用者 Email 權限
+
+
+# Google OAuth 2.0 憑證與 Scope 設定 (透過環境變數保護 Client ID 與 Secret)
+SOCIALACCOUNT_PROVIDERS = {
+    'google': {
+        # 請求 Google 授權的範圍：取得使用者 basic profile (名字/頭像) 與 email
+        'SCOPE': [
+            'profile',
+            'email',
+        ],
+        'AUTH_PARAMS': {
+            'access_type': 'online',  # 不需要背景 offline 存取權 (不需要 refresh token)
+        },
+        'APP': {
+            'client_id': os.getenv('GOOGLE_CLIENT_ID', ''),
+            'secret': os.getenv('GOOGLE_CLIENT_SECRET', ''),
+            'key': ''
+        }
+    }
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
