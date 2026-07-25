@@ -1,5 +1,49 @@
+import stripe
+from django.conf import settings
+from django.http import HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from rest_framework import viewsets, exceptions
 from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
+from core.services.stripe_service import StripeWebhookService
+
+
+@csrf_exempt
+@require_POST
+def stripe_webhook_view(request):
+    """
+    Stripe Webhook API Endpoint
+    注意：金流 Webhook 來自第三方伺服器，必須繞過 Django 的 CSRF 檢查，
+    並透過 Stripe Signature Signing Secret 進行安全性驗簽。
+    """
+    payload = request.body
+    sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
+    endpoint_secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", None)
+
+    event = None
+
+    # 1. 簽章驗證 (Signature Verification)
+    try:
+        if endpoint_secret:
+            event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+        else:
+            # 開發測試環境未配置 Secret 時解析 JSON
+            import json
+            event = json.loads(payload)
+    except ValueError as e:
+        # Invalid payload
+        return HttpResponse(status=400)
+    except stripe.error.SignatureVerificationError as e:
+        # Invalid signature
+        return HttpResponse(status=400)
+
+    # 2. 呼叫 Service 執行 Redis 鎖 + 冪等性處理
+    try:
+        StripeWebhookService.handle_event(event)
+        return JsonResponse({"status": "success"}, status=200)
+    except Exception as e:
+        return JsonResponse({"error": "Internal server error"}, status=500)
+    
 
 class TenantBaseViewSet(viewsets.ModelViewSet):
     """
