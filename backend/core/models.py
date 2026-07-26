@@ -216,3 +216,36 @@ class Project(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.organization.name})"
+    
+    
+# ==========================================
+# 8. 組織邀請模型 (Organization Invitation)
+# ==========================================
+class OrganizationInvitation(BaseModel):
+    """
+    紀錄受邀加入 Working Space 的 Email 邀請紀錄
+    """
+    organization = models.ForeignKey(
+        Organization, 
+        on_delete=models.CASCADE, 
+        related_name="invitations"
+    )
+    email = models.EmailField(_("invited email"))
+    role = models.CharField(
+        max_length=20, 
+        choices=OrganizationRole.choices, 
+        default=OrganizationRole.MEMBER
+    )
+    invited_by = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name="sent_invitations"
+    )
+    is_accepted = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "saas_organization_invitation"
+        unique_together = ("organization", "email")
+
+    def __str__(self):
+        return f"Invite {self.email} to {self.organization.name} as {self.role}"

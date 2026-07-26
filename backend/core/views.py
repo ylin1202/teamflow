@@ -1,21 +1,23 @@
+import json
 import stripe
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from rest_framework import viewsets, exceptions
-from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
-from core.services.stripe_service import StripeWebhookService
 
-from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
-from dj_rest_auth.registration.views import SocialLoginView
-
+from rest_framework import viewsets, exceptions, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from core.models import OrganizationMember, Project
-from core.serializers import ProjectSerializer
+from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from dj_rest_auth.registration.views import SocialLoginView
+
+from core.models import OrganizationMember, OrganizationInvitation, Project
+from core.serializers import ProjectSerializer, OrganizationMemberSerializer, OrganizationInvitationSerializer
+from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
+from core.services.stripe_service import StripeWebhookService
+
 
 @csrf_exempt
 @require_POST
@@ -112,7 +114,6 @@ class TenantBaseViewSet(viewsets.ModelViewSet):
 class MyOrganizationsView(APIView):
     """
     取得當前登入使用者所屬的所有 Organization 清單與角色
-    前端登入後可透過此 API 獲取 X-Organization-ID 進行後續請求
     """
     permission_classes = [IsAuthenticated]
 
@@ -135,9 +136,73 @@ class MyOrganizationsView(APIView):
 
 
 class ProjectViewSet(TenantBaseViewSet):
-    """
-    繼承 TenantBaseViewSet：
-    會自動從 Header 讀取 X-Organization-ID 進行資料隔離與寫入
-    """
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
+
+
+class OrganizationMemberViewSet(viewsets.ModelViewSet):
+    """
+    成員管理 ViewSet
+    """
+    serializer_class = OrganizationMemberSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        org_id = self.request.headers.get('X-Organization-ID')
+        if not org_id:
+            return OrganizationMember.objects.none()
+        return OrganizationMember.objects.filter(organization_id=org_id).select_related('user')
+
+    def destroy(self, request, *args, **kwargs):
+        member = self.get_object()
+        current_user_member = OrganizationMember.objects.filter(
+            organization=member.organization, 
+            user=request.user
+        ).first()
+
+        if not current_user_member or current_user_member.role not in ['OWNER', 'ADMIN']:
+            return Response({'detail': '只有 Owner 或 Admin 可以移除成員。'}, status=status.HTTP_403_FORBIDDEN)
+
+        if member.role == 'OWNER':
+            return Response({'detail': '無法移除 Owner 角色。'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return super().destroy(request, *args, **kwargs)
+
+
+class OrganizationInvitationViewSet(viewsets.ModelViewSet):
+    """
+    邀請碼發送與管理 ViewSet
+    """
+    serializer_class = OrganizationInvitationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        org_id = self.request.headers.get('X-Organization-ID')
+        if not org_id:
+            return OrganizationInvitation.objects.none()
+        return OrganizationInvitation.objects.filter(organization_id=org_id)
+
+    def create(self, request, *args, **kwargs):
+        org_id = self.request.headers.get('X-Organization-ID')
+        if not org_id:
+            return Response({'detail': '缺少 X-Organization-ID Header'}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_member = OrganizationMember.objects.filter(
+            organization_id=org_id, 
+            user=request.user
+        ).first()
+
+        if not current_member or current_member.role not in ['OWNER', 'ADMIN']:
+            return Response({'detail': '只有 Owner 或 Admin 能發送邀請。'}, status=status.HTTP_403_FORBIDDEN)
+
+        email = request.data.get('email')
+        role = request.data.get('role', 'MEMBER')
+
+        invitation, created = OrganizationInvitation.objects.get_or_create(
+            organization_id=org_id,
+            email=email,
+            defaults={'role': role, 'invited_by': request.user}
+        )
+
+        serializer = self.get_serializer(invitation)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
