@@ -15,13 +15,25 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
-from core.views import GoogleLoginView, stripe_webhook_view, MyOrganizationsView
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from core.views import (
+    GoogleLoginView, 
+    stripe_webhook_view, 
+    MyOrganizationsView,
+    ProjectViewSet
+)
 
+# 建立 DefaultRouter 並註冊 ProjectViewSet
+router = DefaultRouter()
+router.register(r'projects', ProjectViewSet, basename='project')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/google/', GoogleLoginView.as_view(), name='google_login'),
     path('api/organizations/me/', MyOrganizationsView.as_view(), name='my_organizations'),
-    path("webhooks/stripe/", stripe_webhook_view, name="stripe_webhook"),
+    path('webhooks/stripe/', stripe_webhook_view, name='stripe_webhook'),
+    
+    # 自動生成 /api/projects/ 與 /api/projects/{id}/ 的 CRUD 路由
+    path('api/', include(router.urls)),
 ]

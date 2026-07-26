@@ -194,3 +194,25 @@ class StripeEventLog(BaseModel):
 
     def __str__(self):
         return f"{self.event_id} - {self.type} ({self.status})"
+    
+
+# ==========================================
+# 7. 專案/業務模型 (用於測試多租戶資料隔離)
+# ==========================================
+class Project(BaseModel):
+    """
+    專案模型：綁定 Organization，用於驗證 TenantBaseViewSet 的資料隔離機制
+    """
+    organization = models.ForeignKey(
+        Organization, 
+        on_delete=models.CASCADE, 
+        related_name="projects"
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "saas_project"
+
+    def __str__(self):
+        return f"{self.name} ({self.organization.name})"

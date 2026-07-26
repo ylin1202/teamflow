@@ -13,8 +13,9 @@ from dj_rest_auth.registration.views import SocialLoginView
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from core.models import OrganizationMember
 
+from core.models import OrganizationMember, Project
+from core.serializers import ProjectSerializer
 
 @csrf_exempt
 @require_POST
@@ -131,3 +132,12 @@ class MyOrganizationsView(APIView):
             for m in memberships
         ]
         return Response(data)
+
+
+class ProjectViewSet(TenantBaseViewSet):
+    """
+    繼承 TenantBaseViewSet：
+    會自動從 Header 讀取 X-Organization-ID 進行資料隔離與寫入
+    """
+    queryset = Project.objects.all()
+    serializer_class = ProjectSerializer
