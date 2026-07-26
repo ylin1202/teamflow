@@ -82,6 +82,22 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_started
+  
+  # 6. Next.js 前端容器
+  frontend:
+    build: ./frontend
+    container_name: saas_frontend
+    command: npm run dev
+    env_file:
+      - ./frontend/.env.local   # 告訴 Docker Compose 直接讀取 frontend/.env.local
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # 匿名 volume：隔離容器內的 node_modules，不讓本地影響容器
+      - /app/.next         # 匿名 volume：隔離編譯快取
+    ports:
+      - "3000:3000"
+    depends_on:
+      - web
 
 volumes:
   mysql_data:
