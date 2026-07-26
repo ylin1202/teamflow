@@ -3,22 +3,25 @@
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { useOrgStore } from "@/store/useOrgStore";
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
-  // 若未登入自動導回登入頁
+  // 從 Zustand 取出組織狀態
+  const { organizations, currentOrg, setCurrentOrg, isLoading } = useOrgStore();
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login");
     }
   }, [status, router]);
 
-  if (status === "loading") {
+  if (status === "loading" || isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
-        <p className="text-gray-500 font-medium">載入使用者狀態中...</p>
+        <p className="text-gray-500 font-medium">載入系統狀態中...</p>
       </div>
     );
   }
@@ -27,9 +30,13 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-100 p-8">
-      <div className="mx-auto max-w-4xl rounded-xl bg-white p-6 shadow-md">
-        <div className="flex items-center justify-between border-b pb-4">
-          <h1 className="text-2xl font-bold text-gray-800">控制台 (Dashboard)</h1>
+      <div className="mx-auto max-w-4xl space-y-6">
+        {/* Header 卡片 */}
+        <div className="flex items-center justify-between rounded-xl bg-white p-6 shadow-md">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">SaaS 控制台</h1>
+            <p className="text-sm text-gray-500">{session.user?.email}</p>
+          </div>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
             className="rounded-md bg-red-500 px-4 py-2 text-sm text-white hover:bg-red-600 transition"
@@ -38,33 +45,38 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        <div className="mt-6 space-y-4">
-          {/* 使用者基本資訊 */}
-          <div className="flex items-center space-x-4">
-            {session.user?.image && (
-              <img
-                src={session.user.image}
-                alt="Avatar"
-                className="h-16 w-16 rounded-full"
-              />
-            )}
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                {session.user?.name}
-              </h2>
-              <p className="text-sm text-gray-500">{session.user?.email}</p>
-            </div>
+        {/* 多租戶 Organization Switcher 卡片 */}
+        <div className="rounded-xl bg-white p-6 shadow-md border border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-800 border-b pb-3">
+            🏢 當前選擇的 Working Space (Tenant)
+          </h2>
+
+          <div className="mt-4 flex items-center space-x-4">
+            <label className="text-sm font-medium text-gray-700">切換組織：</label>
+            <select
+              value={currentOrg?.id || ""}
+              onChange={(e) => {
+                const selected = organizations.find((o) => o.id === e.target.value);
+                if (selected) setCurrentOrg(selected);
+              }}
+              className="rounded-lg border border-gray-300 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name} ({org.role})
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Django Backend JWT Token */}
-          <div className="mt-6 rounded-lg bg-gray-50 p-4 border border-gray-200">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
-              Django 後端核發之 JWT Token (Key)
-            </h3>
-            <p className="mt-2 break-all font-mono text-xs text-emerald-600 bg-emerald-50 p-2 rounded border border-emerald-200">
-              {session.user?.backendToken || "未取得 Token (請檢查 next-auth callbacks)"}
-            </p>
-          </div>
+          {currentOrg && (
+            <div className="mt-6 rounded-lg bg-gray-50 p-4 font-mono text-xs text-gray-700 space-y-1 border border-gray-200">
+              <p><span className="font-bold text-blue-600">Org ID (UUIDv7):</span> {currentOrg.id}</p>
+              <p><span className="font-bold text-blue-600">Org Slug:</span> {currentOrg.slug}</p>
+              <p><span className="font-bold text-blue-600">Role:</span> {currentOrg.role}</p>
+              <p><span className="font-bold text-blue-600">Is Owner:</span> {currentOrg.is_owner ? "Yes" : "No"}</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
