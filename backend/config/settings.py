@@ -56,6 +56,18 @@ INSTALLED_APPS = [
     'core',
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        # 如果你使用 dj_rest_auth / authtoken
+        'rest_framework.authentication.TokenAuthentication',
+        # 如果使用 SimpleJWT
+        # 'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+}
+
 # django.contrib.sites 所需的預設站台 ID
 SITE_ID = 1
 

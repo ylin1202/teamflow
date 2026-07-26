@@ -10,6 +10,11 @@ from core.services.stripe_service import StripeWebhookService
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from core.models import OrganizationMember
+
 
 @csrf_exempt
 @require_POST
@@ -101,3 +106,28 @@ class TenantBaseViewSet(viewsets.ModelViewSet):
         elif self.action == "destroy":
             return [IsOrganizationOwner()]
         return [IsOrganizationMember()]
+    
+
+class MyOrganizationsView(APIView):
+    """
+    取得當前登入使用者所屬的所有 Organization 清單與角色
+    前端登入後可透過此 API 獲取 X-Organization-ID 進行後續請求
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        memberships = OrganizationMember.objects.filter(
+            user=request.user
+        ).select_related("organization")
+
+        data = [
+            {
+                "id": str(m.organization.id),
+                "name": m.organization.name,
+                "slug": m.organization.slug,
+                "role": m.role,
+                "is_owner": m.organization.owner_id == request.user.id
+            }
+            for m in memberships
+        ]
+        return Response(data)

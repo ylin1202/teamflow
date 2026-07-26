@@ -16,11 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from core.views import GoogleLoginView, stripe_webhook_view
+from core.views import GoogleLoginView, stripe_webhook_view, MyOrganizationsView
 
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/google/', GoogleLoginView.as_view(), name='google_login'),
+    path('api/organizations/me/', MyOrganizationsView.as_view(), name='my_organizations'),
     path("webhooks/stripe/", stripe_webhook_view, name="stripe_webhook"),
 ]
