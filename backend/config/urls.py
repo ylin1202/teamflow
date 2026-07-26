@@ -21,6 +21,6 @@ from core.views import GoogleLoginView, stripe_webhook_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path("auth/google/", GoogleLoginView.as_view(), name="google_login"),
+    path('api/auth/google/', GoogleLoginView.as_view(), name='google_login'),
     path("webhooks/stripe/", stripe_webhook_view, name="stripe_webhook"),
 ]

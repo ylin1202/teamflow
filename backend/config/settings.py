@@ -26,8 +26,8 @@ SECRET_KEY = 'django-insecure-m4e)-=jiuki(o#s82j(ltb2(+@8ouu+&@_4111r^h89uz7f9tm
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
-
+# 允許 localhost, 127.0.0.1 以及 Docker 容器服務名稱
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'web', 'saas_django', '*']
 
 # Application definition
 

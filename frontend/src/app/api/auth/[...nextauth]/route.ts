@@ -18,6 +18,12 @@ declare module "next-auth/jwt" {
   }
 }
 
+// 容器內部 Server-side 通訊優先使用 http://web:8000，避開 localhost 斷線問題
+const BACKEND_URL =
+  process.env.BACKEND_INTERNAL_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  "http://web:8000";
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
@@ -29,19 +35,23 @@ export const authOptions: NextAuthOptions = {
     async signIn({ user, account }) {
       if (account?.provider === "google") {
         try {
-          // 將 Google 的 access_token 傳給 Django 後端
+          // 傳送 account.access_token 給 Django 進行 Google 驗證
           const response = await axios.post(
-            `${process.env.NEXT_PUBLIC_API_BASE_URL}/api/auth/google/`,
+            `${BACKEND_URL}/api/auth/google/`,
             {
               access_token: account.access_token,
             }
           );
-
-          // 將 Django 回傳的 JWT Key 存到 user 物件中
+    
+          // 儲存 Django 核發的 JWT Key
           user.backendToken = response.data.key;
           return true;
-        } catch (error) {
-          console.error("後端 Google Auth 換照失敗:", error);
+        } catch (error: any) {
+          if (error.response) {
+            console.error("Django Auth 錯誤細節:", error.response.data);
+          } else {
+            console.error("後端 Google Auth 換照失敗:", error.message);
+          }
           return false;
         }
       }
