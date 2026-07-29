@@ -76,11 +76,35 @@ export default function TeamPage() {
 
   // 撤回邀請
   const handleCancelInvite = async (id: string) => {
+    if (!window.confirm("確定要取消此邀請嗎？")) return;
     try {
       await api.delete(`/api/invitations/${id}/`);
       fetchTeamData();
     } catch (err) {
       console.error("取消邀請失敗", err);
+    }
+  };
+
+  // 修改成員角色
+  const handleUpdateRole = async (memberId: string, newRole: string) => {
+    try {
+      await api.patch(`/api/org-members/${memberId}/`, { role: newRole });
+      fetchTeamData();
+    } catch (err) {
+      console.error("修改角色失敗", err);
+      alert("修改權限失敗");
+    }
+  };
+
+  // 移除成員
+  const handleRemoveMember = async (memberId: string) => {
+    if (!window.confirm("確定要將此成員從團隊中移除嗎？")) return;
+    try {
+      await api.delete(`/api/org-members/${memberId}/`);
+      fetchTeamData();
+    } catch (err) {
+      console.error("移除成員失敗", err);
+      alert("移除成員失敗");
     }
   };
 
@@ -182,17 +206,39 @@ export default function TeamPage() {
                     Joined: {new Date(member.created_at).toLocaleDateString()}
                   </p>
                 </div>
-                <span
-                  className={`text-xs font-bold px-3 py-1 rounded-full ${
-                    member.role === "OWNER"
-                      ? "bg-purple-100 text-purple-700"
-                      : member.role === "ADMIN"
-                      ? "bg-blue-100 text-blue-700"
-                      : "bg-gray-100 text-gray-700"
-                  }`}
-                >
-                  {member.role}
-                </span>
+
+                <div className="flex items-center space-x-3">
+                  {canManageTeam && member.role !== "OWNER" ? (
+                    <>
+                      <select
+                        value={member.role}
+                        onChange={(e) => handleUpdateRole(member.id, e.target.value)}
+                        className="text-xs rounded border border-gray-300 px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                      >
+                        <option value="MEMBER">MEMBER</option>
+                        <option value="ADMIN">ADMIN</option>
+                      </select>
+                      <button
+                        onClick={() => handleRemoveMember(member.id)}
+                        className="text-xs text-red-600 hover:text-red-800 hover:underline px-1"
+                      >
+                        Remove
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      className={`text-xs font-bold px-3 py-1 rounded-full ${
+                        member.role === "OWNER"
+                          ? "bg-purple-100 text-purple-700"
+                          : member.role === "ADMIN"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-gray-100 text-gray-700"
+                      }`}
+                    >
+                      {member.role}
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
