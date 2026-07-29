@@ -298,3 +298,44 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(invitation)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+class CancelSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        # 1. 改從 Header 讀取 X-Organization-ID
+        org_id = request.headers.get("X-Organization-ID")
+        if not org_id:
+            # 防護機制：若 Header 沒帶，嘗試從 URL 參數或 request.user 的 owned_organizations 抓取
+            org_id = request.query_params.get("org_id")
+            if not org_id and hasattr(request.user, "owned_organizations"):
+                first_org = request.user.owned_organizations.first()
+                if first_org:
+                    org_id = str(first_org.id)
+
+        if not org_id:
+            return Response({"error": "Missing X-Organization-ID header."}, status=400)
+
+        # 2. 取得 Subscription
+        sub = Subscription.objects.filter(organization_id=org_id).first()
+        if not sub:
+            return Response({"error": "No subscription found for this organization."}, status=404)
+
+        # 3. 嘗試呼叫 Stripe API 取消
+        if sub.stripe_subscription_id and sub.stripe_subscription_id.startswith("sub_"):
+            try:
+                stripe.Subscription.modify(
+                    sub.stripe_subscription_id,
+                    cancel_at_period_end=True
+                )
+            except stripe.error.StripeError as e:
+                logger.warning(f"Stripe API Cancel Notice: {str(e)}")
+
+        # 4. 更新在地資料庫狀態
+        sub.status = "canceling"
+        sub.cancel_at_period_end = True
+        sub.save()
+
+        return Response({
+            "message": "Subscription will be canceled at the end of current billing period.",
+            "status": "canceling"
+        })

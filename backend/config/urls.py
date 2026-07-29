@@ -26,6 +26,7 @@ from core.views import (
     OrganizationInvitationViewSet,
     CreateCheckoutSessionView,
     SubscriptionStatusView,
+    CancelSubscriptionView
 )
 
 # 建立 DefaultRouter 並註冊 ViewSets
@@ -40,6 +41,8 @@ urlpatterns = [
     path('api/organizations/me/', MyOrganizationsView.as_view(), name='my_organizations'),
     path('api/billing/checkout/', CreateCheckoutSessionView.as_view(), name='billing_checkout'),
     path('api/billing/subscription/', SubscriptionStatusView.as_view(), name='billing_subscription'),
+    path('api/billing/subscription/cancel/', CancelSubscriptionView.as_view(), name='cancel_subscription'),
+    
     path('webhooks/stripe/', stripe_webhook_view, name='stripe_webhook'),
     
     # 自動生成 /api/projects/、/api/org-members/ 與 /api/invitations/ 的路由

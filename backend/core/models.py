@@ -126,7 +126,14 @@ class SubscriptionStatus(models.TextChoices):
     ACTIVE = "active", _("Active")
     PAST_DUE = "past_due", _("Past Due")
     CANCELED = "canceled", _("Canceled")
+    CANCELING = "canceling", _("Canceling at Period End")
     INCOMPLETE = "incomplete", _("Incomplete")
+
+
+class SubscriptionPlan(models.TextChoices):
+    FREE = "free", _("Free Tier")
+    PRO = "pro", _("Pro Plan")
+    ENTERPRISE = "enterprise", _("Enterprise")
 
 
 class Subscription(BaseModel):
@@ -141,12 +148,21 @@ class Subscription(BaseModel):
     stripe_subscription_id = models.CharField(
         max_length=255, unique=True, null=True, blank=True, db_index=True
     )
+    stripe_customer_id = models.CharField(  # 雙向綁定 Customer ID，查詢更方便
+        max_length=255, null=True, blank=True, db_index=True
+    )
     stripe_price_id = models.CharField(max_length=255, null=True, blank=True)
     
+    # 方案與狀態
+    plan = models.CharField(
+        max_length=20,
+        choices=SubscriptionPlan.choices,
+        default=SubscriptionPlan.FREE
+    )
     status = models.CharField(
         max_length=20, 
         choices=SubscriptionStatus.choices, 
-        default=SubscriptionStatus.INCOMPLETE
+        default=SubscriptionStatus.ACTIVE
     )
     
     # 商業 API 配額（提供給 Redis Rate Limiter 讀取與驗證）
@@ -160,8 +176,8 @@ class Subscription(BaseModel):
         db_table = "saas_subscription"
 
     def __str__(self):
-        return f"{self.organization.name} - {self.status}"
-
+        return f"{self.organization.name} - {self.plan} ({self.status})"
+    
 
 # ==========================================
 # 6. Stripe Webhook 審計與冪等日誌 (Stripe Event Log)

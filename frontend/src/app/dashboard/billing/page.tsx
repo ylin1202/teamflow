@@ -11,6 +11,14 @@ interface SubscriptionInfo {
   current_period_end?: string;
 }
 
+interface QuotaUsage {
+  used: number;
+  limit: number;
+  remaining: number;
+  percentage: number;
+  month: string;
+}
+
 const PLANS = [
   {
     key: "free",
@@ -54,15 +62,21 @@ const PLANS = [
 export default function BillingPage() {
   const { currentOrg } = useOrgStore();
   const [subInfo, setSubInfo] = useState<SubscriptionInfo | null>(null);
+  const [usage, setUsage] = useState<QuotaUsage | null>(null);
   const [loadingPriceId, setLoadingPriceId] = useState<string | null>(null);
+  const [loadingCancel, setLoadingCancel] = useState(false); // 💡 改為取消訂閱的 Loading 狀態
 
   const fetchSubscription = useCallback(async () => {
     if (!currentOrg) return;
     try {
-      const res = await api.get<SubscriptionInfo>("/api/billing/subscription/");
-      setSubInfo(res.data);
+      const [subRes, usageRes] = await Promise.all([
+        api.get<SubscriptionInfo>("/api/billing/subscription/"),
+        api.get<QuotaUsage>("/api/billing/usage/").catch(() => null),
+      ]);
+      setSubInfo(subRes.data);
+      if (usageRes) setUsage(usageRes.data);
     } catch (err) {
-      console.error("無法取得訂閱狀態", err);
+      console.error("無法取得訂閱或用量狀態", err);
     }
   }, [currentOrg]);
 
@@ -89,8 +103,37 @@ export default function BillingPage() {
     }
   };
 
-  // 💡 取得當前平臺的 Plan Key (轉小寫，後端可能是 "PRO" 或 "pro")
+  // 💡 替換為我們原生的「取消訂閱」處理函式
+  const handleCancelSubscription = async () => {
+    const confirmed = window.confirm(
+      "確定要取消訂閱嗎？取消後，本月剩餘時間仍可繼續使用，期滿後將自動降級至 Free 方案。"
+    );
+
+    if (!confirmed) return;
+
+    setLoadingCancel(true);
+    try {
+      await api.delete("/api/billing/subscription/cancel/");
+      alert("已成功設定取消訂閱，將於本月期滿後自動停止扣款。");
+      fetchSubscription(); // 重新整理訂閱狀態
+    } catch (err) {
+      console.error("取消訂閱失敗", err);
+      alert("取消失敗，請稍後再試。");
+    } finally {
+      setLoadingCancel(false);
+    }
+  };
+
   const currentPlanKey = subInfo?.plan?.toLowerCase() || "free";
+  const isCanceling = subInfo?.status === "canceling";
+
+  const usedPercentage = usage?.percentage ?? 0;
+  const progressBarColor =
+    usedPercentage >= 90
+      ? "bg-red-500"
+      : usedPercentage >= 75
+      ? "bg-amber-500"
+      : "bg-blue-600";
 
   return (
     <div className="space-y-8">
@@ -102,30 +145,68 @@ export default function BillingPage() {
       </div>
 
       {/* 當前訂閱狀態卡片 */}
-      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100 uppercase">
-            Current Plan: {subInfo?.plan || "FREE"}
-          </span>
-          <h2 className="text-xl font-bold text-gray-800 mt-2">
-            Status: <span className="capitalize">{subInfo?.status || "Active"}</span>
-          </h2>
-          <p className="text-xs text-gray-500 mt-1">
-            Monthly API Quota:{" "}
-            <strong className="text-gray-700">
-              {subInfo?.monthly_api_quota !== undefined && subInfo?.monthly_api_quota !== null
-                ? subInfo.monthly_api_quota.toLocaleString()
-                : "1,000"}
-            </strong>{" "}
-            calls
-          </p>
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col justify-between gap-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100 uppercase">
+              Current Plan: {subInfo?.plan || "FREE"}
+            </span>
+            <h2 className="text-xl font-bold text-gray-800 mt-2">
+              Status: <span className="capitalize">{subInfo?.status || "Active"}</span>
+            </h2>
+          </div>
+
+          <div className="text-left md:text-right flex flex-col items-start md:items-end gap-2">
+            <div>
+              <span className="text-xs text-gray-500">Monthly Limit</span>
+              <p className="text-lg font-bold text-gray-800">
+                {subInfo?.monthly_api_quota ? subInfo.monthly_api_quota.toLocaleString() : "1,000"} calls
+              </p>
+            </div>
+
+            {/* 💡 只要是付費方案 (非 Free)，就顯示我們原生的「取消訂閱」按鈕 */}
+            {currentPlanKey !== "free" && (
+              <button
+                onClick={handleCancelSubscription}
+                disabled={loadingCancel || isCanceling}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm ${
+                  isCanceling
+                    ? "bg-amber-50 text-amber-700 border-amber-200 cursor-not-allowed"
+                    : "bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
+                }`}
+              >
+                {isCanceling
+                  ? "Canceling at Period End"
+                  : loadingCancel
+                  ? "Processing..."
+                  : "Cancel Subscription"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* API 用量進度條 */}
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex justify-between items-center text-xs text-gray-600 mb-1.5 font-medium">
+            <span>API Usage this month ({usage?.month || "Current Period"})</span>
+            <span>
+              <strong className="text-gray-900">{usage?.used.toLocaleString() ?? 0}</strong> /{" "}
+              {subInfo?.monthly_api_quota ? subInfo.monthly_api_quota.toLocaleString() : "1,000"} calls ({usedPercentage}%)
+            </span>
+          </div>
+
+          <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+            <div
+              className={`h-2.5 rounded-full transition-all duration-500 ${progressBarColor}`}
+              style={{ width: `${Math.min(100, usedPercentage)}%` }}
+            ></div>
+          </div>
         </div>
       </div>
 
       {/* 方案選擇矩陣 (Pricing Table) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {PLANS.map((plan) => {
-          // 💡 動態判斷這張卡片是否為當前用戶的方案
           const isCurrent = currentPlanKey === plan.key;
 
           return (
@@ -169,7 +250,6 @@ export default function BillingPage() {
                 </ul>
               </div>
 
-              {/* 💡 根據動態判斷 renders 按鈕 */}
               <button
                 onClick={() => handleSubscribe(plan.priceId)}
                 disabled={isCurrent || !plan.priceId || loadingPriceId === plan.priceId}
