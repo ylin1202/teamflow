@@ -1,7 +1,10 @@
+import os
 import json
 import stripe
 import logging
+import redis
 from django.conf import settings
+from django.utils import timezone
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -14,16 +17,23 @@ from rest_framework.permissions import IsAuthenticated
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
 
-from core.models import OrganizationMember, OrganizationInvitation, Project, Subscription
+
+from core.models import OrganizationMember, OrganizationInvitation, Project, Subscription, Organization
 from core.serializers import ProjectSerializer, OrganizationMemberSerializer, OrganizationInvitationSerializer
 from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
 from core.services.stripe_service import StripeWebhookService
 
+from django.utils.decorators import method_decorator
+from core.decorators import enforce_quota
 
+
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+r = redis.Redis.from_url(REDIS_URL)
 
 stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
-
 logger = logging.getLogger(__name__)
+
 
 @csrf_exempt
 @require_POST
@@ -298,6 +308,96 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(invitation)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+
+class QuotaUsageView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        # 1. 雙重保險抓取 Organization
+        org = getattr(request, 'organization', None)
+        
+        # 2. 若 Middleware 未注入，從 Header 拿 X-Organization-ID
+        if not org:
+            org_id = request.headers.get("X-Organization-ID")
+            if org_id:
+                # 💡 修復處：先找該使用者是否有這間 Org 的 Member 紀錄
+                member = OrganizationMember.objects.filter(
+                    user=request.user, 
+                    organization_id=org_id
+                ).select_related('organization').first()
+                
+                if member:
+                    org = member.organization
+
+        # 3. 若 Header 也沒帶，預設抓該使用者所屬的第一個 Organization
+        if not org:
+            member = OrganizationMember.objects.filter(
+                user=request.user
+            ).select_related('organization').first()
+            
+            if member:
+                org = member.organization
+
+        # 4. 如果完全找不到任何 Org
+        if not org:
+            return Response(
+                {"error": "No organization found for this user."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. 取得 Subscription 限額上限
+        sub = Subscription.objects.filter(organization=org).first()
+        limit = sub.monthly_api_quota if sub else 1000
+
+        # 6. 讀取 Redis 當月 API 用量
+        current_month = timezone.now().strftime("%Y-%m")
+        redis_key = f"quota:org:{org.id}:{current_month}:used"
+
+        used_val = r.get(redis_key)
+        used = int(used_val.decode('utf-8')) if used_val else 0
+
+        return Response({
+            "used": used,
+            "limit": limit,
+            "remaining": max(0, limit - used),
+            "percentage": round((used / limit) * 100, 2) if limit > 0 else 0.0,
+            "month": current_month,
+        })
+    
+
+class CustomerPortalView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # 1. 取得當前請求的 Organization
+        org = getattr(request, "organization", None) or getattr(request.user, "organization", None)
+        if not org:
+            return Response({"error": "No organization associated with current user."}, status=400)
+
+        # 2. 直接從 Organization 取得 stripe_customer_id
+        customer_id = getattr(org, "stripe_customer_id", None)
+
+        if not customer_id:
+            return Response(
+                {"error": "No Stripe Customer ID found. Please complete a payment first."}, 
+                status=400
+            )
+
+        try:
+            # 3. 建立 Stripe Customer Portal Session
+            frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+            portal_session = stripe.billing_portal.Session.create(
+                customer=customer_id,
+                return_url=f"{frontend_url}/billing",
+            )
+            return Response({"url": portal_session.url})
+        except Exception as e:
+            logger.error(f"Failed to create Stripe portal session: {str(e)}")
+            return Response({"error": str(e)}, status=500)
+        
+
+
 class CancelSubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -338,4 +438,18 @@ class CancelSubscriptionView(APIView):
         return Response({
             "message": "Subscription will be canceled at the end of current billing period.",
             "status": "canceling"
+        })
+    
+
+class ExecuteCoreTaskView(APIView):
+    """
+    模擬耗用 API 配額的核心業務 API
+    """
+    permission_classes = [IsAuthenticated]
+
+    @method_decorator(enforce_quota)
+    def post(self, request):
+        return Response({
+            "status": "success",
+            "message": "Task executed successfully! 1 API quota consumed."
         })

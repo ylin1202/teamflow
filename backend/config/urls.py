@@ -26,8 +26,12 @@ from core.views import (
     OrganizationInvitationViewSet,
     CreateCheckoutSessionView,
     SubscriptionStatusView,
-    CancelSubscriptionView
+    QuotaUsageView,
+    CustomerPortalView,
+    CancelSubscriptionView,
+    ExecuteCoreTaskView
 )
+
 
 # 建立 DefaultRouter 並註冊 ViewSets
 router = DefaultRouter()
@@ -41,7 +45,11 @@ urlpatterns = [
     path('api/organizations/me/', MyOrganizationsView.as_view(), name='my_organizations'),
     path('api/billing/checkout/', CreateCheckoutSessionView.as_view(), name='billing_checkout'),
     path('api/billing/subscription/', SubscriptionStatusView.as_view(), name='billing_subscription'),
+    
+    path('api/billing/usage/', QuotaUsageView.as_view(), name='quota_usage'),
+    path('api/billing/portal/', CustomerPortalView.as_view(), name='billing_portal'),
     path('api/billing/subscription/cancel/', CancelSubscriptionView.as_view(), name='cancel_subscription'),
+    path("api/tasks/execute/", ExecuteCoreTaskView.as_view(), name="task-execute"),
     
     path('webhooks/stripe/', stripe_webhook_view, name='stripe_webhook'),
     

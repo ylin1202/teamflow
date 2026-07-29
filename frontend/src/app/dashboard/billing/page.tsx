@@ -64,22 +64,34 @@ export default function BillingPage() {
   const [subInfo, setSubInfo] = useState<SubscriptionInfo | null>(null);
   const [usage, setUsage] = useState<QuotaUsage | null>(null);
   const [loadingPriceId, setLoadingPriceId] = useState<string | null>(null);
-  const [loadingCancel, setLoadingCancel] = useState(false); // 💡 改為取消訂閱的 Loading 狀態
+  const [loadingCancel, setLoadingCancel] = useState(false);
 
+  // 1. 修正 useCallback 依賴：精準綁定 currentOrg?.id
   const fetchSubscription = useCallback(async () => {
-    if (!currentOrg) return;
+    if (!currentOrg?.id) return;
     try {
+      // 顯式帶上 X-Organization-ID，確保 Axios 不會抓到快取或空值
+      const config = {
+        headers: {
+          "X-Organization-ID": currentOrg.id,
+        },
+      };
+
       const [subRes, usageRes] = await Promise.all([
-        api.get<SubscriptionInfo>("/api/billing/subscription/"),
-        api.get<QuotaUsage>("/api/billing/usage/").catch(() => null),
+        api.get<SubscriptionInfo>("/api/billing/subscription/", config),
+        api.get<QuotaUsage>("/api/billing/usage/", config).catch(() => null),
       ]);
+
       setSubInfo(subRes.data);
-      if (usageRes) setUsage(usageRes.data);
+      if (usageRes?.data) {
+        setUsage(usageRes.data);
+      }
     } catch (err) {
       console.error("無法取得訂閱或用量狀態", err);
     }
-  }, [currentOrg]);
+  }, [currentOrg?.id]); // 改為監視 currentOrg.id
 
+  // 2. 當 currentOrg?.id 改變時自動重抓
   useEffect(() => {
     fetchSubscription();
   }, [fetchSubscription]);
@@ -103,7 +115,6 @@ export default function BillingPage() {
     }
   };
 
-  // 💡 替換為我們原生的「取消訂閱」處理函式
   const handleCancelSubscription = async () => {
     const confirmed = window.confirm(
       "確定要取消訂閱嗎？取消後，本月剩餘時間仍可繼續使用，期滿後將自動降級至 Free 方案。"
@@ -115,7 +126,7 @@ export default function BillingPage() {
     try {
       await api.delete("/api/billing/subscription/cancel/");
       alert("已成功設定取消訂閱，將於本月期滿後自動停止扣款。");
-      fetchSubscription(); // 重新整理訂閱狀態
+      fetchSubscription();
     } catch (err) {
       console.error("取消訂閱失敗", err);
       alert("取消失敗，請稍後再試。");
@@ -127,7 +138,11 @@ export default function BillingPage() {
   const currentPlanKey = subInfo?.plan?.toLowerCase() || "free";
   const isCanceling = subInfo?.status === "canceling";
 
-  const usedPercentage = usage?.percentage ?? 0;
+  // 優先使用 Usage API 回傳的即時數據，若無則 fallback 到 subInfo
+  const currentLimit = usage?.limit ?? subInfo?.monthly_api_quota ?? 1000;
+  const currentUsed = usage?.used ?? 0;
+  const usedPercentage = usage?.percentage ?? (currentLimit > 0 ? Math.round((currentUsed / currentLimit) * 100) : 0);
+
   const progressBarColor =
     usedPercentage >= 90
       ? "bg-red-500"
@@ -160,11 +175,10 @@ export default function BillingPage() {
             <div>
               <span className="text-xs text-gray-500">Monthly Limit</span>
               <p className="text-lg font-bold text-gray-800">
-                {subInfo?.monthly_api_quota ? subInfo.monthly_api_quota.toLocaleString() : "1,000"} calls
+                {currentLimit.toLocaleString()} calls
               </p>
             </div>
 
-            {/* 💡 只要是付費方案 (非 Free)，就顯示我們原生的「取消訂閱」按鈕 */}
             {currentPlanKey !== "free" && (
               <button
                 onClick={handleCancelSubscription}
@@ -190,8 +204,8 @@ export default function BillingPage() {
           <div className="flex justify-between items-center text-xs text-gray-600 mb-1.5 font-medium">
             <span>API Usage this month ({usage?.month || "Current Period"})</span>
             <span>
-              <strong className="text-gray-900">{usage?.used.toLocaleString() ?? 0}</strong> /{" "}
-              {subInfo?.monthly_api_quota ? subInfo.monthly_api_quota.toLocaleString() : "1,000"} calls ({usedPercentage}%)
+              <strong className="text-gray-900">{currentUsed.toLocaleString()}</strong> /{" "}
+              {currentLimit.toLocaleString()} calls ({usedPercentage}%)
             </span>
           </div>
 

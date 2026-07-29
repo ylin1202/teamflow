@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useSession } from "next-auth/react";
-import { useOrgStore, Organization } from "@/store/useOrgStore";
+import { useOrgStore } from "@/store/useOrgStore";
 
 export default function OrgProvider({ children }: { children: React.ReactNode }) {
   const { status } = useSession();
