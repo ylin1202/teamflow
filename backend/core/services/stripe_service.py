@@ -20,6 +20,7 @@ class StripeWebhookService:
     2. 結合 StripeEventLog 資料庫記錄，實現嚴格的「冪等性 (Idempotency)」
     3. 使用 transaction.atomic() 確保金流狀態更新之原子性
     4. 動態對應 Stripe Price ID 並自動更新 API 配額 (Quota)
+    5. 完整的金流邊界事件處理 (扣款失敗 past_due、訂閱終止 canceled / 降級 Free)
     """
 
     LOCK_EXPIRE_SECONDS = 60  # 分散式鎖過期時間
@@ -104,14 +105,27 @@ class StripeWebhookService:
         """
         根據不同的 Stripe 事件類型更新 DB 訂閱狀態與 API 配額
         """
-        # 處理 1: 付款完成、訂閱更新，或是退訂/過期
-        if event_type in ["checkout.session.completed", "customer.subscription.updated", "customer.subscription.deleted"]:
+        # 涵蓋所有訂閱週期與扣款狀態變更事件
+        if event_type in [
+            "checkout.session.completed",
+            "customer.subscription.updated",
+            "customer.subscription.deleted",
+            "invoice.payment_failed",
+        ]:
             customer_id = payload_obj.get("customer")
             subscription_id = payload_obj.get("subscription") or payload_obj.get("id")
             
-            # 如果是 customer.subscription.deleted 事件，強制將 status 改為 canceled
+            # 1. 抓取 Stripe 傳來的 cancel_at_period_end 標記
+            cancel_at_period_end = payload_obj.get("cancel_at_period_end", False)
+
+            # 依據事件類型與取消標記精確對應狀態
             if event_type == "customer.subscription.deleted":
                 status_str = "canceled"
+            elif event_type == "invoice.payment_failed":
+                status_str = "past_due"
+            elif cancel_at_period_end:
+                # 2. 若預約取消，直接將狀態記為 canceling
+                status_str = "canceling"
             else:
                 status_str = payload_obj.get("status", "active")
 
@@ -129,6 +143,12 @@ class StripeWebhookService:
                     sub_items = stripe_sub.get("items", {}).get("data", [])
                     if sub_items:
                         price_id = sub_items[0].get("price", {}).get("id")
+                        
+                    # 若原本沒抓到，順便從 Stripe 物件更新 cancel_at_period_end
+                    if cancel_at_period_end is False:
+                        cancel_at_period_end = stripe_sub.get("cancel_at_period_end", False)
+                        if cancel_at_period_end and status_str == "active":
+                            status_str = "canceling"
                 except Exception as e:
                     logger.warning(f"Could not retrieve Stripe subscription {subscription_id}: {e}")
 
@@ -160,21 +180,23 @@ class StripeWebhookService:
                 subscription.stripe_price_id = price_id
 
             subscription.status = status_str
+            # 3. 確保將 cancel_at_period_end 保存至資料庫
+            subscription.cancel_at_period_end = cancel_at_period_end
 
             # 動態更新 Plan 與 API 配額 logic
             target_price_id = price_id or subscription.stripe_price_id
             plan_config = cls.PRICE_MAP.get(target_price_id)
 
-            if status_str in ["active", SubscriptionStatus.ACTIVE]:
+            # 4. active 或 canceling 都依然享有付費配額（直到期滿正式 deleted 才降級）
+            if status_str in ["active", "canceling", SubscriptionStatus.ACTIVE]:
                 if plan_config:
                     subscription.plan = plan_config["plan"]
                     subscription.monthly_api_quota = plan_config["quota"]
                 else:
                     subscription.plan = "PRO"
                     subscription.monthly_api_quota = 50000
-                subscription.cancel_at_period_end = False
             else:
-                # 訂閱取消、過期、退訂或失敗，降級為 Free Tier
+                # 訂閱正式終止 (canceled) 或扣款失敗 (past_due)，自動降級為 Free Tier
                 subscription.plan = "FREE"
                 subscription.monthly_api_quota = 1000
 

@@ -148,14 +148,20 @@ class SubscriptionStatusView(APIView):
                 "plan": "FREE",
                 "status": "active",
                 "monthly_api_quota": 1000,
+                "cancel_at_period_end": False,
             })
 
+        # 判斷是否處於預約取消狀態
+        is_canceling = bool(sub.cancel_at_period_end or sub.status == "canceling")
+
         return Response({
-            "plan": sub.plan if hasattr(sub, 'plan') else "PRO",
-            "status": sub.status,
+            "plan": getattr(sub, 'plan', 'PRO'),
+            "status": "canceling" if is_canceling else sub.status, # 若預約取消，狀態統一回傳 canceling
             "monthly_api_quota": sub.monthly_api_quota,
             "current_period_end": sub.current_period_end,
+            "cancel_at_period_end": is_canceling,
         })
+    
     
 
 class GoogleLoginView(SocialLoginView):
@@ -402,25 +408,14 @@ class CancelSubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request):
-        # 1. 改從 Header 讀取 X-Organization-ID
         org_id = request.headers.get("X-Organization-ID")
-        if not org_id:
-            # 防護機制：若 Header 沒帶，嘗試從 URL 參數或 request.user 的 owned_organizations 抓取
-            org_id = request.query_params.get("org_id")
-            if not org_id and hasattr(request.user, "owned_organizations"):
-                first_org = request.user.owned_organizations.first()
-                if first_org:
-                    org_id = str(first_org.id)
-
         if not org_id:
             return Response({"error": "Missing X-Organization-ID header."}, status=400)
 
-        # 2. 取得 Subscription
         sub = Subscription.objects.filter(organization_id=org_id).first()
         if not sub:
             return Response({"error": "No subscription found for this organization."}, status=404)
 
-        # 3. 嘗試呼叫 Stripe API 取消
         if sub.stripe_subscription_id and sub.stripe_subscription_id.startswith("sub_"):
             try:
                 stripe.Subscription.modify(
@@ -430,14 +425,15 @@ class CancelSubscriptionView(APIView):
             except stripe.error.StripeError as e:
                 logger.warning(f"Stripe API Cancel Notice: {str(e)}")
 
-        # 4. 更新在地資料庫狀態
+        # 同時更新 status 與 cancel_at_period_end 欄位
         sub.status = "canceling"
         sub.cancel_at_period_end = True
         sub.save()
 
         return Response({
             "message": "Subscription will be canceled at the end of current billing period.",
-            "status": "canceling"
+            "status": "canceling",
+            "cancel_at_period_end": True
         })
     
 
@@ -453,3 +449,36 @@ class ExecuteCoreTaskView(APIView):
             "status": "success",
             "message": "Task executed successfully! 1 API quota consumed."
         })
+    
+class ReactivateSubscriptionView(APIView):
+    """
+    將即將到期的訂閱恢復為自動續訂 (cancel_at_period_end = False)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        org_id = request.headers.get("X-Organization-ID")
+        if not org_id:
+            return Response({"error": "Missing X-Organization-ID header."}, status=status.HTTP_400_BAD_REQUEST)
+
+        sub = Subscription.objects.filter(organization_id=org_id).first()
+        if not sub or not sub.stripe_subscription_id:
+            return Response({"error": "No subscription found to reactivate."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            # 呼叫 Stripe API 關閉取消預定
+            stripe.Subscription.modify(
+                sub.stripe_subscription_id,
+                cancel_at_period_end=False
+            )
+            sub.cancel_at_period_end = False
+            sub.status = "active"
+            sub.save()
+
+            return Response({
+                "message": "Subscription reactivated successfully!",
+                "status": "active"
+            })
+        except Exception as e:
+            logger.error(f"Failed to reactivate subscription: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

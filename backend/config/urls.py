@@ -29,7 +29,8 @@ from core.views import (
     QuotaUsageView,
     CustomerPortalView,
     CancelSubscriptionView,
-    ExecuteCoreTaskView
+    ExecuteCoreTaskView,
+    ReactivateSubscriptionView
 )
 
 
@@ -49,6 +50,7 @@ urlpatterns = [
     path('api/billing/usage/', QuotaUsageView.as_view(), name='quota_usage'),
     path('api/billing/portal/', CustomerPortalView.as_view(), name='billing_portal'),
     path('api/billing/subscription/cancel/', CancelSubscriptionView.as_view(), name='cancel_subscription'),
+    path('api/billing/subscription/reactivate/', ReactivateSubscriptionView.as_view(), name='reactivate_subscription'),
     path("api/tasks/execute/", ExecuteCoreTaskView.as_view(), name="task-execute"),
     
     path('webhooks/stripe/', stripe_webhook_view, name='stripe_webhook'),

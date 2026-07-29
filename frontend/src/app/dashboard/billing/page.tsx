@@ -9,6 +9,7 @@ interface SubscriptionInfo {
   status: string;
   monthly_api_quota: number;
   current_period_end?: string;
+  cancel_at_period_end?: boolean;
 }
 
 interface QuotaUsage {
@@ -65,12 +66,13 @@ export default function BillingPage() {
   const [usage, setUsage] = useState<QuotaUsage | null>(null);
   const [loadingPriceId, setLoadingPriceId] = useState<string | null>(null);
   const [loadingCancel, setLoadingCancel] = useState(false);
+  const [loadingReactivate, setLoadingReactivate] = useState(false);
+  const [loadingPortal, setLoadingPortal] = useState(false);
 
-  // 1. 修正 useCallback 依賴：精準綁定 currentOrg?.id
+  // 1. 抓取訂閱狀態與用量
   const fetchSubscription = useCallback(async () => {
     if (!currentOrg?.id) return;
     try {
-      // 顯式帶上 X-Organization-ID，確保 Axios 不會抓到快取或空值
       const config = {
         headers: {
           "X-Organization-ID": currentOrg.id,
@@ -89,13 +91,13 @@ export default function BillingPage() {
     } catch (err) {
       console.error("無法取得訂閱或用量狀態", err);
     }
-  }, [currentOrg?.id]); // 改為監視 currentOrg.id
+  }, [currentOrg?.id]);
 
-  // 2. 當 currentOrg?.id 改變時自動重抓
   useEffect(() => {
     fetchSubscription();
   }, [fetchSubscription]);
 
+  // 2. 訂閱 / 升級
   const handleSubscribe = async (priceId: string) => {
     if (!priceId) return;
     setLoadingPriceId(priceId);
@@ -115,6 +117,7 @@ export default function BillingPage() {
     }
   };
 
+  // 3. 取消訂閱
   const handleCancelSubscription = async () => {
     const confirmed = window.confirm(
       "確定要取消訂閱嗎？取消後，本月剩餘時間仍可繼續使用，期滿後將自動降級至 Free 方案。"
@@ -135,10 +138,41 @@ export default function BillingPage() {
     }
   };
 
-  const currentPlanKey = subInfo?.plan?.toLowerCase() || "free";
-  const isCanceling = subInfo?.status === "canceling";
+  // 4. 恢復自動續訂 (Reactivate)
+  const handleReactivateSubscription = async () => {
+    setLoadingReactivate(true);
+    try {
+      await api.post("/api/billing/subscription/reactivate/");
+      alert("已成功恢復自動續訂！");
+      fetchSubscription();
+    } catch (err) {
+      console.error("恢復續訂失敗", err);
+      alert("恢復失敗，請稍後再試。");
+    } finally {
+      setLoadingReactivate(false);
+    }
+  };
 
-  // 優先使用 Usage API 回傳的即時數據，若無則 fallback 到 subInfo
+  // 5. 前往 Stripe Billing Portal 管理信用卡/發票
+  const handleOpenPortal = async () => {
+    setLoadingPortal(true);
+    try {
+      const res = await api.post<{ url: string }>("/api/billing/portal/");
+      if (res.data.url) {
+        window.location.href = res.data.url;
+      }
+    } catch (err) {
+      console.error("開啟 Billing Portal 失敗", err);
+      alert("無法開啟付款管理介面，請稍後再試。");
+    } finally {
+      setLoadingPortal(false);
+    }
+  };
+
+  const currentPlanKey = subInfo?.plan?.toLowerCase() || "free";
+  const isCanceling = subInfo?.status === "canceling" || subInfo?.cancel_at_period_end;
+  const isPastDue = subInfo?.status === "past_due";
+
   const currentLimit = usage?.limit ?? subInfo?.monthly_api_quota ?? 1000;
   const currentUsed = usage?.used ?? 0;
   const usedPercentage = usage?.percentage ?? (currentLimit > 0 ? Math.round((currentUsed / currentLimit) * 100) : 0);
@@ -159,19 +193,71 @@ export default function BillingPage() {
         </p>
       </div>
 
+      {/* ⚠️ 扣款失敗警示 Banner (Past Due) */}
+      {isPastDue && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <span className="text-xl">⚠️</span>
+            <div>
+              <h3 className="font-bold text-sm">Payment Failed</h3>
+              <p className="text-xs text-red-600 mt-0.5">
+                Your latest subscription payment has failed. Please update your payment details to retain access.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleOpenPortal}
+            disabled={loadingPortal}
+            className="px-3.5 py-1.5 text-xs font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 transition shadow-sm whitespace-nowrap"
+          >
+            {loadingPortal ? "Opening..." : "Update Payment Method"}
+          </button>
+        </div>
+      )}
+
+      {/* ⚠️ 訂閱即將到期警示 Banner (Canceling) */}
+      {isCanceling && !isPastDue && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-900 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-3">
+            <span className="text-xl">⏳</span>
+            <div>
+              <h3 className="font-bold text-sm">Subscription Canceling</h3>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Your {subInfo?.plan} plan will be downgraded to Free at the end of the current billing cycle.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleReactivateSubscription}
+            disabled={loadingReactivate}
+            className="px-3.5 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition shadow-sm whitespace-nowrap"
+          >
+            {loadingReactivate ? "Processing..." : "Reactivate Subscription"}
+          </button>
+        </div>
+      )}
+
       {/* 當前訂閱狀態卡片 */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col justify-between gap-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100 uppercase">
-              Current Plan: {subInfo?.plan || "FREE"}
-            </span>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100 uppercase">
+                Current Plan: {subInfo?.plan || "FREE"}
+              </span>
+              {isPastDue && (
+                <span className="text-xs font-semibold text-red-600 bg-red-100 px-2.5 py-1 rounded-full uppercase">
+                  Past Due
+                </span>
+              )}
+            </div>
+
             <h2 className="text-xl font-bold text-gray-800 mt-2">
-              Status: <span className="capitalize">{subInfo?.status || "Active"}</span>
+              Status: <span className="capitalize">{isCanceling ? "Canceling at Period End" : subInfo?.status || "Active"}</span>
             </h2>
           </div>
 
-          <div className="text-left md:text-right flex flex-col items-start md:items-end gap-2">
+          <div className="text-left md:text-right flex flex-col md:flex-row items-start md:items-center gap-2">
             <div>
               <span className="text-xs text-gray-500">Monthly Limit</span>
               <p className="text-lg font-bold text-gray-800">
@@ -180,21 +266,33 @@ export default function BillingPage() {
             </div>
 
             {currentPlanKey !== "free" && (
-              <button
-                onClick={handleCancelSubscription}
-                disabled={loadingCancel || isCanceling}
-                className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm ${
-                  isCanceling
-                    ? "bg-amber-50 text-amber-700 border-amber-200 cursor-not-allowed"
-                    : "bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
-                }`}
-              >
-                {isCanceling
-                  ? "Canceling at Period End"
-                  : loadingCancel
-                  ? "Processing..."
-                  : "Cancel Subscription"}
-              </button>
+              <div className="flex items-center space-x-2 mt-2 md:mt-0">
+                {isCanceling ? (
+                  <button
+                    onClick={handleReactivateSubscription}
+                    disabled={loadingReactivate}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200"
+                  >
+                    {loadingReactivate ? "Processing..." : "Reactivate"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleCancelSubscription}
+                    disabled={loadingCancel}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm bg-red-50 text-red-600 hover:bg-red-100 border-red-200"
+                  >
+                    {loadingCancel ? "Processing..." : "Cancel Subscription"}
+                  </button>
+                )}
+
+                <button
+                  onClick={handleOpenPortal}
+                  disabled={loadingPortal}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm bg-gray-50 text-gray-700 hover:bg-gray-100 border-gray-200"
+                >
+                  {loadingPortal ? "Loading..." : "Manage Billing"}
+                </button>
+              </div>
             )}
           </div>
         </div>
