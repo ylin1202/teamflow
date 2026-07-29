@@ -2,6 +2,8 @@ import uuid6
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
+from django.core.serializers.json import DjangoJSONEncoder
+
 
 # 定義 UUIDv7 產生器函數，供 Django ORM default 呼叫
 def generate_uuidv7():
@@ -184,7 +186,7 @@ class StripeEventLog(BaseModel):
     )
     
     # MySQL JSON 欄位（儲存 Webhook 原始 Payload）
-    payload = models.JSONField()
+    payload = models.JSONField(encoder=DjangoJSONEncoder, default=dict)
     error_message = models.TextField(null=True, blank=True)
     
     processed_at = models.DateTimeField(null=True, blank=True)

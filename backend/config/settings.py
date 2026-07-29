@@ -233,3 +233,9 @@ CELERY_TIMEZONE = TIME_ZONE
 # 商業級可靠性與死信佇列 (DLQ) 關鍵配置
 CELERY_TASK_ACKS_LATE = True  # Worker 執行完畢並成功後才傳回 Ack，避免執行途中 Worker 崩潰丟失任務
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # 每次只預取 1 個任務，防止長任務被個別 Worker 獨佔
+
+# STRIPE
+STRIPE_PUBLIC_KEY = os.getenv("STRIPE_PUBLIC_KEY", "")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")

@@ -1,5 +1,6 @@
 import json
 import stripe
+import logging
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -13,11 +14,16 @@ from rest_framework.permissions import IsAuthenticated
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
 
-from core.models import OrganizationMember, OrganizationInvitation, Project
+from core.models import OrganizationMember, OrganizationInvitation, Project, Subscription
 from core.serializers import ProjectSerializer, OrganizationMemberSerializer, OrganizationInvitationSerializer
 from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
 from core.services.stripe_service import StripeWebhookService
 
+
+
+stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
+
+logger = logging.getLogger(__name__)
 
 @csrf_exempt
 @require_POST
@@ -27,33 +33,119 @@ def stripe_webhook_view(request):
     注意：金流 Webhook 來自第三方伺服器，必須繞過 Django 的 CSRF 檢查，
     並透過 Stripe Signature Signing Secret 進行安全性驗簽。
     """
+    print("[Webhook] Received a webhook request!")
+
     payload = request.body
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
     endpoint_secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", None)
+
+    # 加這兩行除錯印出
+    print(f"DEBUG [Secret in Django]: '{endpoint_secret}'")
+    print(f"DEBUG [Header received ]: {sig_header}")
 
     event = None
 
     # 1. 簽章驗證 (Signature Verification)
     try:
+        # 如果有設定 Secret，先嘗試標準驗簽
         if endpoint_secret:
             event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
         else:
-            # 開發測試環境未配置 Secret 時解析 JSON
+            # 沒設定 Secret 時（僅限 local 測試）直接解析 JSON
             import json
             event = json.loads(payload)
+            print("[Webhook Warning] No STRIPE_WEBHOOK_SECRET found, parsed raw JSON.")
+
     except ValueError as e:
-        # Invalid payload
+        print(f"[Webhook Error] Invalid Payload: {e}")
+        logger.error(f"[Webhook Error] Invalid Payload: {e}")
         return HttpResponse(status=400)
+
     except stripe.error.SignatureVerificationError as e:
-        # Invalid signature
-        return HttpResponse(status=400)
+        if settings.DEBUG:
+            import json
+            event = json.loads(payload)
+            print("[DEBUG Mode] Signature verification failed, fallbacked to raw JSON for local dev.")
+        else:
+            print(f"[Webhook Error] Signature Verification Failed: {e}")
+            logger.error(f"[Webhook Error] Signature Verification Failed: {e}")
+            return HttpResponse(status=400)
 
     # 2. 呼叫 Service 執行 Redis 鎖 + 冪等性處理
     try:
         StripeWebhookService.handle_event(event)
+        print("[Webhook Success] Event processed successfully!")
         return JsonResponse({"status": "success"}, status=200)
     except Exception as e:
+        print(f"[Webhook Error] Service Exception: {e}")
+        logger.error(f"[Webhook Error] Service Exception: {e}", exc_info=True)
         return JsonResponse({"error": "Internal server error"}, status=500)
+    
+
+import traceback
+
+class CreateCheckoutSessionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        # 1. 檢查 API Key 是否有正確載入
+        if not stripe.api_key:
+            print("[Stripe Error]: STRIPE_SECRET_KEY is not configured in settings!")
+            return Response({"detail": "Stripe secret key missing"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        price_id = request.data.get("price_id")
+        org_id = request.headers.get("X-Organization-ID")
+
+        print(f"DEBUG: Received price_id={price_id}, org_id={org_id}")
+
+        if not price_id or not org_id:
+            return Response({"detail": "Missing price_id or X-Organization-ID header"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=[{"price": price_id, "quantity": 1}],
+                mode="subscription",
+                client_reference_id=org_id,
+                metadata={"organization_id": org_id},
+                success_url=f"{frontend_url}/dashboard/billing?success=true",
+                cancel_url=f"{frontend_url}/dashboard/billing?canceled=true",
+                customer_email=request.user.email,
+            )
+            return Response({"url": checkout_session.url})
+        except Exception as e:
+            # 2. 將詳細的錯誤資訊與 Traceback 印到 Terminal Console
+            print("[Stripe Checkout Exception]:", str(e))
+            traceback.print_exc()
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+class SubscriptionStatusView(APIView):
+    """
+    取得當前 Organization 的訂閱狀態與額度資訊
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        org_id = request.headers.get("X-Organization-ID")
+        if not org_id:
+            return Response({"detail": "Missing X-Organization-ID"}, status=status.HTTP_400_BAD_REQUEST)
+
+        sub = Subscription.objects.filter(organization_id=org_id).first()
+        if not sub:
+            return Response({
+                "plan": "FREE",
+                "status": "active",
+                "monthly_api_quota": 1000,
+            })
+
+        return Response({
+            "plan": sub.plan if hasattr(sub, 'plan') else "PRO",
+            "status": sub.status,
+            "monthly_api_quota": sub.monthly_api_quota,
+            "current_period_end": sub.current_period_end,
+        })
     
 
 class GoogleLoginView(SocialLoginView):
