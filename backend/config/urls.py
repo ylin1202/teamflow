@@ -30,7 +30,8 @@ from core.views import (
     CustomerPortalView,
     CancelSubscriptionView,
     ExecuteCoreTaskView,
-    ReactivateSubscriptionView
+    ReactivateSubscriptionView,
+    CustomerPortalView
 )
 
 
