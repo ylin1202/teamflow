@@ -257,7 +257,7 @@ export default function BillingPage() {
             </h2>
           </div>
 
-          <div className="text-left md:text-right flex flex-col md:flex-row items-start md:items-center gap-2">
+          <div className="text-left md:text-right flex flex-col md:flex-row items-start md:items-center gap-6">
             <div>
               <span className="text-xs text-gray-500">Monthly Limit</span>
               <p className="text-lg font-bold text-gray-800">
@@ -265,6 +265,7 @@ export default function BillingPage() {
               </p>
             </div>
 
+            {/* 右側按鈕區（帶 Tooltip） */}
             {currentPlanKey !== "free" && (
               <div className="flex items-center space-x-2 mt-2 md:mt-0">
                 {isCanceling ? (
@@ -285,13 +286,24 @@ export default function BillingPage() {
                   </button>
                 )}
 
-                <button
-                  onClick={handleOpenPortal}
-                  disabled={loadingPortal}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm bg-gray-50 text-gray-700 hover:bg-gray-100 border-gray-200"
-                >
-                  {loadingPortal ? "Loading..." : "Manage Billing"}
-                </button>
+                {/* 帶 Tooltip 的按鈕區塊 */}
+                <div className="relative group inline-block">
+                  <button
+                    onClick={handleOpenPortal}
+                    disabled={loadingPortal}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg transition border shadow-sm bg-gray-50 text-gray-700 hover:bg-gray-100 border-gray-200 flex items-center space-x-1"
+                  >
+                    <span>{loadingPortal ? "Loading..." : "Manage Payment & Invoices"}</span>
+                    <span className="text-[10px] opacity-60">↗</span>
+                  </button>
+
+                  {/* 滑鼠懸停時顯示的浮動黑色 Tooltip */}
+                  <div className="absolute right-0 top-full mt-2 hidden group-hover:flex flex-col items-end z-20 w-64 pointer-events-none">
+                    <div className="bg-gray-900 text-white text-[11px] leading-relaxed p-2.5 rounded-lg shadow-xl border border-gray-800 text-left">
+                      You will be redirected to our secure payment partner (Stripe) to manage your cards and invoices.
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
