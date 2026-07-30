@@ -24,10 +24,11 @@ from core.views import (
     SubscriptionStatusView,
     QuotaUsageView,
     CustomerPortalView,
-    CancelSubscriptionView,
     ExecuteCoreTaskView,
-    ReactivateSubscriptionView,
-    CustomerPortalView
+    TaskViewSet,
+    DocumentViewSet,
+    AcceptInvitationView,
+    ProjectQuotaUsageView, 
 )
 
 
@@ -36,23 +37,27 @@ router = DefaultRouter()
 router.register(r'projects', ProjectViewSet, basename='project')
 router.register(r'org-members', OrganizationMemberViewSet, basename='org-member')
 router.register(r'invitations', OrganizationInvitationViewSet, basename='invitation')
+router.register(r'tasks', TaskViewSet, basename='task')
+router.register(r'documents', DocumentViewSet, basename='document')
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/auth/google/', GoogleLoginView.as_view(), name='google_login'),
     path('api/organizations/me/', MyOrganizationsView.as_view(), name='my_organizations'),
-    path('api/billing/checkout/', CreateCheckoutSessionView.as_view(), name='billing_checkout'),
-    path('api/billing/subscription/', SubscriptionStatusView.as_view(), name='billing_subscription'),
+    path('api/accept-invitation/', AcceptInvitationView.as_view(), name='accept-invitation'),
     
+    # Billing 相關 Endpoint
+    path('api/billing/checkout/', CreateCheckoutSessionView.as_view(), name='billing_checkout'),
+    path('api/billing/project-usage/', ProjectQuotaUsageView.as_view(), name='project_quota_usage'),
+    path('api/billing/subscription/', SubscriptionStatusView.as_view(), name='billing_subscription'),
     path('api/billing/usage/', QuotaUsageView.as_view(), name='quota_usage'),
     path('api/billing/portal/', CustomerPortalView.as_view(), name='billing_portal'),
-    path('api/billing/subscription/cancel/', CancelSubscriptionView.as_view(), name='cancel_subscription'),
-    path('api/billing/subscription/reactivate/', ReactivateSubscriptionView.as_view(), name='reactivate_subscription'),
+
     path("api/tasks/execute/", ExecuteCoreTaskView.as_view(), name="task-execute"),
-    
     path('webhooks/stripe/', stripe_webhook_view, name='stripe_webhook'),
     
-    # 自動生成 /api/projects/、/api/org-members/ 與 /api/invitations/ 的路由
+    # 自動生成 API ViewSets 路由
     path('api/', include(router.urls)),
 
     # -------------------------------------------------------------------------
