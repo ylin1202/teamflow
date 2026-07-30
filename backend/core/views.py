@@ -3,11 +3,15 @@ import json
 import stripe
 import logging
 import redis
+import secrets
+from datetime import timedelta
+
 from django.conf import settings
 from django.utils import timezone
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from django.utils.decorators import method_decorator
 
 from rest_framework import viewsets, exceptions, status, permissions
 from rest_framework.views import APIView
@@ -18,14 +22,39 @@ from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
 
 
-from core.models import OrganizationMember, OrganizationInvitation, Project, Subscription, Organization
-from core.serializers import ProjectSerializer, OrganizationMemberSerializer, OrganizationInvitationSerializer
+from core.decorators import enforce_quota
+from core.models import (
+    OrganizationMember,
+    OrganizationInvitation,
+    Project,
+    Subscription,
+    Organization,
+    Task,
+    Document,
+)
+from core.serializers import (
+    ProjectSerializer,
+    OrganizationMemberSerializer,
+    OrganizationInvitationSerializer,
+    TaskSerializer,
+    DocumentSerializer,
+)
 from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrganizationOwner
 from core.services.stripe_service import StripeWebhookService
+from core.tasks import send_invitation_email_task
 
-from django.utils.decorators import method_decorator
-from core.decorators import enforce_quota
+# 定義各方案的專案數量上限
+PLAN_PROJECT_LIMITS = {
+    "FREE": 5,
+    "PRO": 25,
+    "ENTERPRISE": 150,
+}
 
+PLAN_MEMBER_LIMITS = {
+    "FREE": 3,
+    "PRO": None,        # 無限制
+    "ENTERPRISE": None, # 無限制
+}
 
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -33,6 +62,7 @@ r = redis.Redis.from_url(REDIS_URL)
 
 stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
 logger = logging.getLogger(__name__)
+
 
 
 @csrf_exempt
@@ -49,7 +79,6 @@ def stripe_webhook_view(request):
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
     endpoint_secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", None)
 
-    # 加這兩行除錯印出
     print(f"DEBUG [Secret in Django]: '{endpoint_secret}'")
     print(f"DEBUG [Header received ]: {sig_header}")
 
@@ -57,12 +86,9 @@ def stripe_webhook_view(request):
 
     # 1. 簽章驗證 (Signature Verification)
     try:
-        # 如果有設定 Secret，先嘗試標準驗簽
         if endpoint_secret:
             event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
         else:
-            # 沒設定 Secret 時（僅限 local 測試）直接解析 JSON
-            import json
             event = json.loads(payload)
             print("[Webhook Warning] No STRIPE_WEBHOOK_SECRET found, parsed raw JSON.")
 
@@ -73,7 +99,6 @@ def stripe_webhook_view(request):
 
     except stripe.error.SignatureVerificationError as e:
         if settings.DEBUG:
-            import json
             event = json.loads(payload)
             print("[DEBUG Mode] Signature verification failed, fallbacked to raw JSON for local dev.")
         else:
@@ -482,3 +507,91 @@ class ReactivateSubscriptionView(APIView):
         except Exception as e:
             logger.error(f"Failed to reactivate subscription: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TaskViewSet(TenantBaseViewSet):
+    """
+    看板任務 ViewSet
+    """
+    queryset = Task.objects.all()
+    serializer_class = TaskSerializer
+    
+    # 允許所有團隊成員（MEMBER / ADMIN / OWNER）檢視、新增與更新狀態 (包含拖曳移動)
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
+
+    def get_permissions(self):
+        # 僅刪除動作需要 ADMIN 以上權限
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
+        return [permissions.IsAuthenticated(), IsOrganizationMember()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset().order_by('-updated_at')
+        project_id = self.request.query_params.get('project_id')
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset
+
+
+class DocumentViewSet(TenantBaseViewSet):
+    """
+    專案 Markdown 文件 ViewSet
+    """
+    queryset = Document.objects.all()
+    serializer_class = DocumentSerializer 
+    
+    # 允許所有團隊成員（MEMBER / ADMIN / OWNER）閱讀與編輯文件內文
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
+
+    def get_permissions(self):
+        # 僅刪除動作需要 ADMIN 以上權限
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
+        return [permissions.IsAuthenticated(), IsOrganizationMember()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset().order_by('-updated_at')
+        project_id = self.request.query_params.get('project_id')
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        if self.request.user.is_authenticated:
+            serializer.instance.created_by = self.request.user
+            serializer.instance.save()
+
+
+class ProjectQuotaUsageView(APIView):
+    """
+    取得當前 Organization 的 Project 建立數量與方案上限配額
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        org_id = request.headers.get("X-Organization-ID")
+        if not org_id:
+            return Response(
+                {"detail": "Missing X-Organization-ID header"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        org = Organization.objects.filter(id=org_id).first()
+        if not org:
+            return Response(
+                {"detail": "Organization not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        sub = Subscription.objects.filter(organization=org).first()
+        plan = (sub.plan if sub and sub.plan else getattr(org, "plan", "FREE") or "FREE").upper()
+
+        current_projects = Project.objects.filter(organization=org).count()
+        max_projects = PLAN_PROJECT_LIMITS.get(plan, 5)
+
+        return Response({
+            "plan": plan,
+            "current_projects": current_projects,
+            "max_projects": max_projects,
+        })
