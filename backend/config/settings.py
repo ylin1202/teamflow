@@ -43,6 +43,9 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'dj_rest_auth',
     
+    # 1. 補上 Swagger / OpenAPI 3.0 自動文件生成套件
+    'drf_spectacular',
+    
     # Allauth & OAuth Providers
     'django.contrib.sites',
     'allauth',
@@ -64,6 +67,27 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    # 2. 指定 OpenAPI Schema 生成器為 drf-spectacular
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# 3. drf-spectacular 詳細設定 (支援 Header 傳送 X-Organization-ID)
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Multi-Tenant SaaS Workspace API',
+    'DESCRIPTION': 'Enterprise-grade SaaS platform with Multi-Tenancy RBAC, Stripe Billing, and Quota Engine.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'APPEND_COMPONENTS': {
+        'securitySchemes': {
+            'X-Organization-ID': {
+                'type': 'apiKey',
+                'in': 'header',
+                'name': 'X-Organization-ID',
+                'description': 'Tenant Organization UUID',
+            }
+        }
+    },
+    'SECURITY': [{'X-Organization-ID': []}],
 }
 
 # django.contrib.sites 所需的預設站台 ID
