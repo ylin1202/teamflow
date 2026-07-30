@@ -153,17 +153,21 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
-
+# Database Configuration (MySQL)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': os.getenv('MYSQL_DATABASE', 'saas_db'),
         'USER': os.getenv('MYSQL_USER', 'saas_user'),
         'PASSWORD': os.getenv('MYSQL_PASSWORD', 'saas_password'),
-        'HOST': os.getenv('MYSQL_HOST', 'localhost'),  # 容器環境下會是 'db'
+        'HOST': os.getenv('MYSQL_HOST', 'db'),  # Docker Bridge 網路下對應 saas_mysql 服務名稱 'db'
         'PORT': os.getenv('MYSQL_PORT', '3306'),
+
+        # 加上 UTF-8 表情符號與嚴格模式設定
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 
