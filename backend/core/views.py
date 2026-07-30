@@ -445,6 +445,53 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
 
+class AcceptInvitationView(APIView):
+    """
+    受邀使用者點擊 Email 連結後發送 Token 驗證並完成加入
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        token = request.data.get("token")
+        if not token:
+            return Response({"error": "Missing token"}, status=status.HTTP_400_BAD_REQUEST)
+
+        invitation = OrganizationInvitation.objects.filter(token=token, is_accepted=False).first()
+        if not invitation:
+            return Response({"error": "無效或已被使用的邀請連結。"}, status=status.HTTP_404_NOT_FOUND)
+
+        if invitation.expires_at < timezone.now():
+            return Response({"error": "該邀請連結已過期，請聯繫管理員重新發送。"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_email = request.user.email.strip().lower()
+        invite_email = invitation.email.strip().lower()
+
+        if user_email != invite_email:
+            logger.warning(f"[Accept Invite Mismatch] User: '{user_email}' vs Invite: '{invite_email}'")
+            return Response(
+                {"error": f"此邀請函專屬 {invitation.email}，目前登入帳號為 {request.user.email}"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        member, created = OrganizationMember.objects.get_or_create(
+            organization=invitation.organization,
+            user=request.user,
+            defaults={'role': invitation.role}
+        )
+        if not created:
+            member.role = invitation.role
+            member.save()
+
+        invitation.is_accepted = True
+        invitation.save()
+
+        return Response({
+            "message": f"成功加入 {invitation.organization.name}！",
+            "organization_id": str(member.organization.id),
+            "organization_name": member.organization.name
+        })
+    
+
 class QuotaUsageView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
