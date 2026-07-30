@@ -7,6 +7,7 @@ export interface Organization {
   name: string;
   slug?: string;
   role?: string;
+  plan?: string; // 補上方案欄位 (e.g., 'FREE', 'PRO', 'ENTERPRISE')
 }
 
 // 1. 在介面宣告 fetchOrganizations 與 clearOrgState
@@ -43,6 +44,12 @@ export const useOrgStore = create<OrgState>()(
             const exists = orgs.some((o) => o.id === current?.id);
             if (!current || !exists) {
               set({ currentOrg: orgs[0] });
+            } else {
+              // 如果 currentOrg 已存在，順便更新其最新的 plan 資料
+              const updatedCurrent = orgs.find((o) => o.id === current.id);
+              if (updatedCurrent) {
+                set({ currentOrg: updatedCurrent });
+              }
             }
           }
         } catch (err) {
