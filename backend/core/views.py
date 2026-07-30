@@ -204,7 +204,7 @@ class TenantBaseViewSet(viewsets.ModelViewSet):
     多租戶模型 ViewSet 基類：
     1. 自動根據當前 Request 的 Organization ID 過濾 QuerySet (Row-Level 數據隔離)
     2. 自動在 Create 時將物件與當前 Organization 綁定
-    3. 根據 HTTP Method 動態配對 RBAC 權限 (GET 需要 Member，POST/PUT 需要 Admin，DELETE 需要 Owner)
+    3. 根據 HTTP Method 動態配對 RBAC 權限
     """
     permission_classes = [IsOrganizationMember]
 
@@ -269,9 +269,60 @@ class MyOrganizationsView(APIView):
 
 
 class ProjectViewSet(TenantBaseViewSet):
+    """
+    專案 ViewSet：
+    - MEMBER 以上權限：建立 (create)、查看 (list/retrieve)、修改 (update)
+    - ADMIN / OWNER 權限：刪除專案 (destroy)
+    """
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
 
+    def get_permissions(self):
+        # 只有刪除專案 (destroy) 需要 ADMIN 或 OWNER 權限
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
+        
+        # MEMBER 即可建立 (create)、讀取 (list/retrieve)、更新 (update)
+        return [permissions.IsAuthenticated(), IsOrganizationMember()]
+
+    def get_queryset(self):
+        # 按更新時間倒序排序，最新異動排在最前
+        return super().get_queryset().order_by('-updated_at')
+
+    def create(self, request, *args, **kwargs):
+        # 1. 驗證 Header 中的租戶 ID
+        org_id = request.headers.get('X-Organization-ID')
+        if not org_id:
+            return Response({'detail': '缺少 X-Organization-ID Header'}, status=status.HTTP_400_BAD_REQUEST)
+
+        org = Organization.objects.filter(id=org_id).first()
+        if not org:
+            return Response({'detail': 'Organization not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # 2. 取得組織當前的 Plan (優先從 Subscription 拿，沒有則退回 Org.plan)
+        sub = Subscription.objects.filter(organization=org).first()
+        plan = (sub.plan if sub and sub.plan else getattr(org, "plan", "FREE") or "FREE").upper()
+
+        # 3. 取得該方案的專案配額上限
+        max_projects = PLAN_PROJECT_LIMITS.get(plan, 5)
+
+        # 4. 計算當前組織已建立的專案總數
+        current_projects = Project.objects.filter(organization=org).count()
+
+        # 5. 爆額攔截
+        if current_projects >= max_projects:
+            return Response(
+                {
+                    'detail': f"Your current plan ({plan}) allows up to {max_projects} projects. "
+                              f"You currently have {current_projects} project(s). "
+                              f"Please upgrade your plan in Billing to create more projects."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 未超額則調用父類別方法正常建立專案
+        return super().create(request, *args, **kwargs)
+    
 
 class OrganizationMemberViewSet(viewsets.ModelViewSet):
     """
@@ -305,36 +356,92 @@ class OrganizationMemberViewSet(viewsets.ModelViewSet):
 class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     """
     邀請碼發送與管理 ViewSet
+    - MEMBER 以上（MEMBER/ADMIN/OWNER）均可查看待接受邀請清單
+    - 僅 ADMIN / OWNER 可以發送新邀請或取消邀請
     """
     serializer_class = OrganizationInvitationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
+
+    def get_permissions(self):
+        # 發送邀請 (create)、取消邀請 (destroy) 或修改 (update/partial_update) 需要 ADMIN 以上權限
+        if self.action in ['create', 'destroy', 'update', 'partial_update']:
+            return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
+        # 查看 Pending 列表 (list, retrieve) 只需要 MEMBER 權限
+        return [permissions.IsAuthenticated(), IsOrganizationMember()]
 
     def get_queryset(self):
         org_id = self.request.headers.get('X-Organization-ID')
         if not org_id:
             return OrganizationInvitation.objects.none()
-        return OrganizationInvitation.objects.filter(organization_id=org_id)
+        return OrganizationInvitation.objects.filter(organization_id=org_id, is_accepted=False)
 
     def create(self, request, *args, **kwargs):
         org_id = self.request.headers.get('X-Organization-ID')
         if not org_id:
             return Response({'detail': '缺少 X-Organization-ID Header'}, status=status.HTTP_400_BAD_REQUEST)
 
-        current_member = OrganizationMember.objects.filter(
-            organization_id=org_id, 
-            user=request.user
-        ).first()
+        org = Organization.objects.filter(id=org_id).first()
+        if not org:
+            return Response({'detail': 'Organization not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if not current_member or current_member.role not in ['OWNER', 'ADMIN']:
-            return Response({'detail': '只有 Owner 或 Admin 能發送邀請。'}, status=status.HTTP_403_FORBIDDEN)
+        email = request.data.get('email', '').strip().lower()
+        if not email:
+            return Response({'detail': '請提供有效的 Email'}, status=status.HTTP_400_BAD_REQUEST)
 
-        email = request.data.get('email')
         role = request.data.get('role', 'MEMBER')
 
+        # 1. 取得組織當前的 Plan (優先看 Subscription，再退回 Org.plan)
+        sub = Subscription.objects.filter(organization=org).first()
+        plan = (sub.plan if sub and sub.plan else getattr(org, "plan", "FREE") or "FREE").upper()
+
+        # 2. 檢查 Team Member 配額限制
+        member_limit = PLAN_MEMBER_LIMITS.get(plan)
+        
+        if member_limit is not None:
+            # 檢查該 Email 是否已經是待接受邀請 (若已在待邀請清單中，重發不佔用新額度)
+            is_already_invited = OrganizationInvitation.objects.filter(
+                organization_id=org_id, 
+                email=email, 
+                is_accepted=False
+            ).exists()
+
+            if not is_already_invited:
+                current_members_count = OrganizationMember.objects.filter(organization_id=org_id).count()
+                pending_invites_count = OrganizationInvitation.objects.filter(organization_id=org_id, is_accepted=False).count()
+                total_occupied = current_members_count + pending_invites_count
+
+                if total_occupied >= member_limit:
+                    return Response(
+                        {
+                            'detail': f"Your current plan ({plan}) allows up to {member_limit} team members. "
+                                      f"You already have {current_members_count} active member(s) and {pending_invites_count} pending invitation(s). "
+                                      f"Please upgrade your plan to invite more members."
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+        # 建立或更新邀請紀錄
         invitation, created = OrganizationInvitation.objects.get_or_create(
             organization_id=org_id,
             email=email,
             defaults={'role': role, 'invited_by': request.user}
+        )
+
+        if not created:
+            invitation.role = role
+            invitation.token = secrets.token_urlsafe(32)
+            invitation.expires_at = timezone.now() + timedelta(days=7)
+            invitation.save()
+
+        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+        accept_url = f"{frontend_url}/invite/accept?token={invitation.token}"
+
+        send_invitation_email_task.delay(
+            email=email,
+            organization_name=invitation.organization.name,
+            accept_url=accept_url,
+            sender_email=request.user.email,
+            role=role
         )
 
         serializer = self.get_serializer(invitation)
@@ -395,13 +502,12 @@ class QuotaUsageView(APIView):
             "percentage": round((used / limit) * 100, 2) if limit > 0 else 0.0,
             "month": current_month,
         })
-    
+
 
 class CustomerPortalView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
 
     def post(self, request):
-        # 1. 取得當前請求的 Organization
         org = getattr(request, "organization", None) or getattr(request.user, "organization", None)
         if not org:
             return Response({"error": "No organization associated with current user."}, status=400)
