@@ -1,5 +1,10 @@
 import uuid6
+import secrets
+
+from datetime import timedelta
+
 from django.db import models
+from django.utils import timezone
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
 from django.core.serializers.json import DjangoJSONEncoder
@@ -9,6 +14,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 def generate_uuidv7():
     return uuid6.uuid7()
 
+def get_default_invitation_expiration():
+    return timezone.now() + timedelta(days=7)
 
 # ==========================================
 # 1. 核心抽象模型 (Base Model)
@@ -26,7 +33,7 @@ class BaseModel(models.Model):
         help_text="UUIDv7 (Time-ordered Universally Unique Identifier)"
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    updated_at = models.DateTimeField(auto_now=True)  # 統一由 BaseModel 提供更新時間
 
     class Meta:
         abstract = True
@@ -74,6 +81,13 @@ class Organization(BaseModel):
     stripe_customer_id = models.CharField(
         max_length=255, unique=True, null=True, blank=True, db_index=True
     )
+
+    # 增加 plan 欄位方便 API 直接讀取，預設為 FREE
+    plan = models.CharField(
+        max_length=20,
+        default="FREE",
+        help_text="當前方案: FREE (5), PRO (30), ENTERPRISE (100)"
+    )
     
     owner = models.ForeignKey(
         User, on_delete=models.PROTECT, related_name="owned_organizations"
@@ -86,7 +100,7 @@ class Organization(BaseModel):
         db_table = "saas_organization"
 
     def __str__(self):
-        return self.name
+        return f"{self.name} [{self.plan}]"
 
 
 # ==========================================
@@ -120,7 +134,7 @@ class OrganizationMember(BaseModel):
 
 
 # ==========================================
-# 5. 訂閱狀態與配額模型 (Subscription)
+# 5. 訂閱與專案額度模型 (Subscription)
 # ==========================================
 class SubscriptionStatus(models.TextChoices):
     ACTIVE = "active", _("Active")
@@ -131,14 +145,14 @@ class SubscriptionStatus(models.TextChoices):
 
 
 class SubscriptionPlan(models.TextChoices):
-    FREE = "free", _("Free Tier")
-    PRO = "pro", _("Pro Plan")
-    ENTERPRISE = "enterprise", _("Enterprise")
+    FREE = "FREE", _("Free Tier")
+    PRO = "PRO", _("Pro Plan")
+    ENTERPRISE = "ENTERPRISE", _("Enterprise")
 
 
 class Subscription(BaseModel):
     """
-    紀錄組織的 Stripe 訂閱狀態與 API 配額 (Quota)
+    紀錄組織的 Stripe 購買紀錄與 Project 配額 (Quota)
     """
     organization = models.OneToOneField(
         Organization, on_delete=models.CASCADE, related_name="subscription"
@@ -148,7 +162,7 @@ class Subscription(BaseModel):
     stripe_subscription_id = models.CharField(
         max_length=255, unique=True, null=True, blank=True, db_index=True
     )
-    stripe_customer_id = models.CharField(  # 雙向綁定 Customer ID，查詢更方便
+    stripe_customer_id = models.CharField(
         max_length=255, null=True, blank=True, db_index=True
     )
     stripe_price_id = models.CharField(max_length=255, null=True, blank=True)
@@ -165,7 +179,8 @@ class Subscription(BaseModel):
         default=SubscriptionStatus.ACTIVE
     )
     
-    # 商業 API 配額（提供給 Redis Rate Limiter 讀取與驗證）
+    # 專案配額上限 (Free: 5, Pro: 30, Enterprise: 100)
+    max_projects = models.IntegerField(default=5, help_text="該方案允許的最大專案建立數量")
     monthly_api_quota = models.IntegerField(default=1000, help_text="當月可用 API 配額")
     
     current_period_start = models.DateTimeField(null=True, blank=True)
@@ -191,7 +206,6 @@ class StripeEventLog(BaseModel):
         PROCESSED = "processed", _("Processed")
         FAILED = "failed", _("Failed")
 
-    # Stripe 事件的唯一 ID (例如 evt_1Nxxx)，設置 db_index 加速查詢
     event_id = models.CharField(max_length=255, unique=True, db_index=True)
     type = models.CharField(max_length=255, help_text="事件類型，如 checkout.session.completed")
     
@@ -201,7 +215,6 @@ class StripeEventLog(BaseModel):
         default=EventStatus.PENDING
     )
     
-    # MySQL JSON 欄位（儲存 Webhook 原始 Payload）
     payload = models.JSONField(encoder=DjangoJSONEncoder, default=dict)
     error_message = models.TextField(null=True, blank=True)
     
@@ -215,11 +228,11 @@ class StripeEventLog(BaseModel):
     
 
 # ==========================================
-# 7. 專案/業務模型 (用於測試多租戶資料隔離)
+# 7. 專案/業務模型
 # ==========================================
 class Project(BaseModel):
     """
-    專案模型：綁定 Organization，用於驗證 TenantBaseViewSet 的資料隔離機制
+    專案模型：綁定 Organization，自動繼承 BaseModel 的 created_at 與 updated_at
     """
     organization = models.ForeignKey(
         Organization, 
@@ -228,7 +241,7 @@ class Project(BaseModel):
     )
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
-
+    
     class Meta:
         db_table = "saas_project"
 
@@ -260,10 +273,93 @@ class OrganizationInvitation(BaseModel):
         related_name="sent_invitations"
     )
     is_accepted = models.BooleanField(default=False)
+    
+    token = models.CharField(
+        max_length=64, 
+        unique=True, 
+        null=True, 
+        blank=True,
+        help_text="專屬邀請 Token"
+    )
+    
+    expires_at = models.DateTimeField(
+        default=get_default_invitation_expiration,
+        help_text="邀請連結過期時間 (預設 7 天)"
+    )
 
     class Meta:
         db_table = "saas_organization_invitation"
         unique_together = ("organization", "email")
 
+    def save(self, *args, **kwargs):
+        if not self.token:
+            self.token = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Invite {self.email} to {self.organization.name} as {self.role}"
+    
+    
+# ==========================================
+# 9. 看板任務模型 (Task)
+# ==========================================
+class TaskStatus(models.TextChoices):
+    TODO = "todo", _("To Do")
+    IN_PROGRESS = "in_progress", _("In Progress")
+    DONE = "done", _("Done")
+
+
+class Task(BaseModel):
+    """
+    專案內部的看板 Task：綁定 Project 與 Organization (Row-Level 雙重隔離)
+    """
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="tasks"
+    )
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="tasks"
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    status = models.CharField(
+        max_length=20,
+        choices=TaskStatus.choices,
+        default=TaskStatus.TODO
+    )
+    assignee = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_tasks"
+    )
+
+    class Meta:
+        db_table = "saas_task"
+
+    def __str__(self):
+        return f"{self.title} [{self.status}]"
+
+
+# ==========================================
+# 10. 專案 Markdown 文件與規格書模型 (Document)
+# ==========================================
+class Document(BaseModel):
+    """
+    專案層級的 Markdown 文件與規格書 (支援雙欄編輯與 SSE 即時 AI 產生)
+    """
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="documents"
+    )
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="documents"
+    )
+    title = models.CharField(max_length=255)
+    content = models.TextField(blank=True, default="", help_text="Markdown 原始內文")
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_documents"
+    )
+
+    class Meta:
+        db_table = "saas_document"
+
+    def __str__(self):
+        return f"{self.title} ({self.project.name})"
+    
+
