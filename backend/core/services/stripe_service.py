@@ -1,10 +1,12 @@
 import logging
 import stripe
+from redis import Redis
 from django.db import transaction
 from django.conf import settings
 from django.utils import timezone
-from redis import Redis
-from core.models import StripeEventLog, Subscription, Organization, SubscriptionStatus
+
+from core.models import StripeEventLog, Subscription, Organization
+from core.tasks import send_subscription_welcome_email
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +22,19 @@ class StripeWebhookService:
     2. 結合 StripeEventLog 資料庫記錄，實現嚴格的「冪等性 (Idempotency)」
     3. 使用 transaction.atomic() 確保金流狀態更新之原子性
     4. 動態對應 Stripe Price ID 並自動更新 API 配額 (Quota)
-    5. 完整的金流邊界事件處理 (扣款失敗 past_due、訂閱終止 canceled / 降級 Free)
+    5. 金流邊界事件處理 (扣款失敗 past_due)
     """
+    LOCK_EXPIRE_SECONDS = 60
 
-    LOCK_EXPIRE_SECONDS = 60  # 分散式鎖過期時間
-
-    # Price ID 與 Plan / Quota 的映射設定表
     PRICE_MAP = {
-        "price_1TxXgaCNxWb8kewbGkYFsc40": {"plan": "PRO", "quota": 50000},
-        "price_1TxXi5CNxWb8kewbtKDELVkY": {"plan": "ENTERPRISE", "quota": 500000},
+        settings.STRIPE_PRICE_PRO: {
+            "plan": "PRO",
+            "project_limit": 25,
+        },
+        settings.STRIPE_PRICE_ENTERPRISE: {
+            "plan": "ENTERPRISE",
+            "project_limit": 150,
+        },
     }
 
     @classmethod
@@ -102,106 +108,104 @@ class StripeWebhookService:
 
     @classmethod
     def _process_event_payload(cls, event_type: str, payload_obj: dict):
-        """
-        根據不同的 Stripe 事件類型更新 DB 訂閱狀態與 API 配額
-        """
-        # 涵蓋所有訂閱週期與扣款狀態變更事件
-        if event_type in [
-            "checkout.session.completed",
-            "customer.subscription.updated",
-            "customer.subscription.deleted",
-            "invoice.payment_failed",
-        ]:
-            customer_id = payload_obj.get("customer")
-            subscription_id = payload_obj.get("subscription") or payload_obj.get("id")
-            
-            # 1. 抓取 Stripe 傳來的 cancel_at_period_end 標記
-            cancel_at_period_end = payload_obj.get("cancel_at_period_end", False)
-
-            # 依據事件類型與取消標記精確對應狀態
-            if event_type == "customer.subscription.deleted":
-                status_str = "canceled"
-            elif event_type == "invoice.payment_failed":
-                status_str = "past_due"
-            elif cancel_at_period_end:
-                # 2. 若預約取消，直接將狀態記為 canceling
-                status_str = "canceling"
-            else:
-                status_str = payload_obj.get("status", "active")
-
-            # 優先解析 Price ID
-            price_id = None
-            if "items" in payload_obj:
-                items = payload_obj.get("items", {}).get("data", [])
-                if items:
-                    price_id = items[0].get("price", {}).get("id")
-            
-            # 若 payload 沒帶 items (常見於 checkout.session.completed)，向 Stripe API 撈取 Subscription 物件
-            if not price_id and subscription_id and str(subscription_id).startswith("sub_") and stripe.api_key:
-                try:
-                    stripe_sub = stripe.Subscription.retrieve(subscription_id)
-                    sub_items = stripe_sub.get("items", {}).get("data", [])
-                    if sub_items:
-                        price_id = sub_items[0].get("price", {}).get("id")
-                        
-                    # 若原本沒抓到，順便從 Stripe 物件更新 cancel_at_period_end
-                    if cancel_at_period_end is False:
-                        cancel_at_period_end = stripe_sub.get("cancel_at_period_end", False)
-                        if cancel_at_period_end and status_str == "active":
-                            status_str = "canceling"
-                except Exception as e:
-                    logger.warning(f"Could not retrieve Stripe subscription {subscription_id}: {e}")
-
-            # 雙重搜尋策略 (1. stripe_customer_id -> 2. metadata.organization_id / client_reference_id)
-            org = None
-            if customer_id:
-                org = Organization.objects.filter(stripe_customer_id=customer_id).first()
-
-            metadata = payload_obj.get("metadata", {})
-            org_id = metadata.get("organization_id") or payload_obj.get("client_reference_id")
-            
-            if not org and org_id:
-                org = Organization.objects.filter(id=org_id).first()
-                if org and customer_id:
-                    # 順手補齊 Organization 的 stripe_customer_id
-                    org.stripe_customer_id = customer_id
-                    org.save(update_fields=["stripe_customer_id"])
-
-            if not org:
-                logger.warning(f"Organization not found for customer_id: {customer_id}, org_id: {org_id}")
+        # -----------------------------------------------------------------
+        # 事件 1：一次性付款成功 (Checkout Session Completed)
+        # -----------------------------------------------------------------
+        if event_type == "checkout.session.completed":
+            payment_status = payload_obj.get("payment_status")
+            if payment_status != "paid":
+                logger.info(f"[Webhook] Checkout Session {payload_obj.get('id')} payment_status is '{payment_status}', skipping.")
                 return
 
-            # 更新或建立 Subscription 狀態
-            subscription, _ = Subscription.objects.get_or_create(organization=org)
-            if subscription_id:
-                subscription.stripe_subscription_id = subscription_id
+            customer_id = payload_obj.get("customer")
+            session_id = payload_obj.get("id")
 
+            metadata = payload_obj.get("metadata", {})
+            org_id = payload_obj.get("client_reference_id") or metadata.get("organization_id")
+            
+            logger.info(f"DEBUG [Webhook] Processing Session: {session_id}, Extracted org_id: {org_id}")
+
+            org = None
+            if org_id:
+                org = Organization.objects.filter(id=org_id).first()
+
+            if not org and customer_id:
+                org = Organization.objects.filter(stripe_customer_id=customer_id).first()
+
+            if not org:
+                logger.error(f"[Webhook Error] Organization not found for session_id: {session_id}, org_id: {org_id}")
+                return
+
+            if customer_id and org.stripe_customer_id != customer_id:
+                org.stripe_customer_id = customer_id
+                org.save()
+
+            # 相容解析 Stripe SDK 物件與純 Dict 結構中的 Price ID
+            price_id = None
+            try:
+                line_items = stripe.checkout.Session.list_line_items(session_id, limit=1)
+                items_data = line_items.get("data", []) if isinstance(line_items, dict) else getattr(line_items, "data", [])
+                
+                if items_data:
+                    first_item = items_data[0]
+                    price_obj = first_item.get("price", {}) if isinstance(first_item, dict) else getattr(first_item, "price", {})
+                    price_id = price_obj.get("id") if isinstance(price_obj, dict) else getattr(price_obj, "id", None)
+            except Exception as e:
+                logger.warning(f"[Webhook Exception] Failed to list_line_items for session {session_id}: {e}")
+
+            logger.info(f"DEBUG [Webhook] Extracted Price ID: '{price_id}'")
+
+            plan_config = cls.PRICE_MAP.get(price_id) if price_id else None
+
+            if plan_config:
+                target_plan = str(plan_config["plan"]).upper()
+            else:
+                logger.warning(f"[Webhook Warning] Unmapped or missing price_id '{price_id}'. Defaulting to 'PRO'.")
+                target_plan = "PRO"
+
+            # 同時更新 Organization 與 Subscription
+            org.plan = target_plan
+            org.save()
+
+            subscription, _ = Subscription.objects.get_or_create(organization=org)
             if price_id:
                 subscription.stripe_price_id = price_id
-
-            subscription.status = status_str
-            # 3. 確保將 cancel_at_period_end 保存至資料庫
-            subscription.cancel_at_period_end = cancel_at_period_end
-
-            # 動態更新 Plan 與 API 配額 logic
-            target_price_id = price_id or subscription.stripe_price_id
-            plan_config = cls.PRICE_MAP.get(target_price_id)
-
-            # 4. active 或 canceling 都依然享有付費配額（直到期滿正式 deleted 才降級）
-            if status_str in ["active", "canceling", SubscriptionStatus.ACTIVE]:
-                if plan_config:
-                    subscription.plan = plan_config["plan"]
-                    subscription.monthly_api_quota = plan_config["quota"]
-                else:
-                    subscription.plan = "PRO"
-                    subscription.monthly_api_quota = 50000
-            else:
-                # 訂閱正式終止 (canceled) 或扣款失敗 (past_due)，自動降級為 Free Tier
-                subscription.plan = "FREE"
-                subscription.monthly_api_quota = 1000
-
+            
+            subscription.plan = target_plan
+            subscription.status = "active"
             subscription.save()
-            logger.info(
-                f"Successfully updated subscription for Org '{org.name}' | "
-                f"Status: '{status_str}' | Plan: '{subscription.plan}' | Quota: {subscription.monthly_api_quota}"
+
+            transaction.on_commit(
+                lambda: send_subscription_welcome_email.delay(str(org.id))
             )
+
+            logger.info(
+                f"[Webhook Success] Successfully upgraded Org '{org.name}' ({org.id}) to Plan '{target_plan}'!"
+            )
+        
+        # -----------------------------------------------------------------
+        # 邊界事件 2：付款失敗 (Payment Intent Failed)
+        # -----------------------------------------------------------------
+        elif event_type == "payment_intent.payment_failed":
+            customer_id = payload_obj.get("customer")
+            last_payment_error = payload_obj.get("last_payment_error", {}).get("message", "Unknown payment error")
+            
+            logger.warning(
+                f"[Webhook Border Event] Payment failed for Customer {customer_id}. Reason: {last_payment_error}"
+            )
+            
+            if customer_id:
+                org = Organization.objects.filter(stripe_customer_id=customer_id).first()
+                if org:
+                    # 可以記錄 Log 或標記訂閱狀態為 past_due / unpaid，但不升級方案
+                    subscription, _ = Subscription.objects.get_or_create(organization=org)
+                    subscription.status = "unpaid"
+                    subscription.save()
+                    logger.info(f"[Webhook Border Event] Marked subscription as 'unpaid' for Org {org.name}")
+
+        # -----------------------------------------------------------------
+        # 邊界事件 3：結帳 Session 過期/未完成 (Checkout Session Expired)
+        # -----------------------------------------------------------------
+        elif event_type == "checkout.session.expired":
+            session_id = payload_obj.get("id")
+            logger.info(f"[Webhook Border Event] Checkout session {session_id} expired without payment.")
