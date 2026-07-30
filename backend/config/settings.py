@@ -16,15 +16,13 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-m4e)-=jiuki(o#s82j(ltb2(+@8ouu+&@_4111r^h89uz7f9tm'
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
 # 允許 localhost, 127.0.0.1 以及 Docker 容器服務名稱
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'web', 'saas_django', '*']
@@ -173,8 +171,6 @@ SILENCED_SYSTEM_CHECKS = ['models.W036']
 
 
 # Password validation
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -192,8 +188,6 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # Internationalization
-# https://docs.djangoproject.com/en/6.0/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
 
 TIME_ZONE = 'UTC'
@@ -204,25 +198,29 @@ USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.0/howto/static-files/
-
 STATIC_URL = 'static/'
+# 5. Swagger UI 靜態檔案路徑 (部署時收集靜態檔使用)
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
 AUTH_USER_MODEL = "core.User"
 
 
+# 6. Redis 設定 (分散式鎖與快取)
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+
+
 # Celery & RabbitMQ 訊息佇列設定
 RABBITMQ_USER = os.getenv("RABBITMQ_DEFAULT_USER", "guest")
 RABBITMQ_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "guest")
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", "5672")
 
 # Celery Broker 使用 RabbitMQ (amqp 協定)
 CELERY_BROKER_URL = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}//"
 
 # 使用 Redis 作為 Task Result Backend (儲存異步任務執行結果)
-CELERY_RESULT_BACKEND = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = REDIS_URL
 
 # 訊息序列化格式設定
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -234,8 +232,18 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ACKS_LATE = True  # Worker 執行完畢並成功後才傳回 Ack，避免執行途中 Worker 崩潰丟失任務
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # 每次只預取 1 個任務，防止長任務被個別 Worker 獨佔
 
-# STRIPE
+# STRIPE 設定
 STRIPE_PUBLIC_KEY = os.getenv("STRIPE_PUBLIC_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+
+# 電子郵件設定
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)

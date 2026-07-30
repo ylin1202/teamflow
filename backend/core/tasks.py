@@ -1,5 +1,7 @@
 import logging
 from celery import shared_task
+from django.core.mail import send_mail
+from django.conf import settings
 from django.utils import timezone
 from core.models import Organization
 
@@ -7,40 +9,78 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(
-    bind=True,                  # 綁定 self 實體，讓內部可以呼叫 self.retry() 執行自動重試
-    max_retries=3,              # 任務失敗時的「最大重試次數」 (最多重試 3 次)
-    default_retry_delay=60,     # 每次失敗後「等待 60 秒」再進行下一次重試 (防止連續暴擊第三方 API)
-    acks_late=True,             # 確保該任務遵循延遲 Ack 機制，成功才確認
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    acks_late=True,
+)
+def send_invitation_email_task(
+    self, email: str, organization_name: str, accept_url: str, sender_email: str, role: str
+):
+    """【背景任務】發送團隊邀請信"""
+    try:
+        logger.info(f"[Celery Worker] Sending invitation email to {email} for org: {organization_name}")
+        
+        subject = f"【{organization_name}】團隊邀請函"
+        message = (
+            f"您好，\n\n"
+            f"{sender_email} 邀請您加入團隊「{organization_name}」（權限: {role}）。\n\n"
+            f"請點擊下方連結接受邀請：\n"
+            f"{accept_url}\n\n"
+            f"此連結將在 7 天後失效。"
+        )
+
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False,  # 設為 False 讓失敗時拋出 Exception 觸發 Celery 重試
+        )
+        logger.info(f"[Celery Worker] Invitation email successfully sent to {email}")
+        return {"status": "success", "email": email}
+
+    except Exception as exc:
+        logger.warning(f"[Celery Worker] Failed to send invitation email to {email}. Error: {exc}")
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    acks_late=True,
 )
 def send_subscription_welcome_email(self, organization_id: str):
-    """
-    【非同步背景任務】金流成功後在背景發送歡迎信件與發票資訊
-    注意：在 View 或 Service 中請使用 `send_subscription_welcome_email.delay(org_id)` 來呼叫
-    """
+    """【背景任務】付款成功發送歡迎信"""
     try:
-        # 1. 根據 ID 抓取組織與 Owner 資料
         org = Organization.objects.get(id=organization_id)
-        logger.info(f"[Celery Worker] Sending welcome & invoice email to Organization: {org.name} ({org.owner.email})")
-        
-        # 2. 模擬發送 Email 或呼叫第三方 API (如 SendGrid, Resend, Mailgun 等)
-        # ... Mail Sending Logic ...
+        owner_email = org.owner.email
+        logger.info(f"[Celery Worker] Sending welcome email to {owner_email}")
 
-        logger.info(f"[Celery Worker] Email successfully sent for Organization: {org.name}")
-        return {
-            "status": "success", 
-            "org_id": organization_id, 
-            "sent_at": str(timezone.now())
-        }
+        subject = f"【{org.name}】感謝升級至 {org.plan} 方案！"
+        message = (
+            f"親愛的 {org.owner.username} 您好，\n\n"
+            f"您的團隊「{org.name}」已成功升級至 {org.plan} 方案！\n"
+            f"您現在享有最新的專案配額與完整權限功能。\n\n"
+            f"祝使用愉快！"
+        )
+
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[owner_email],
+            fail_silently=False,
+        )
+
+        logger.info(f"[Celery Worker] Welcome email successfully sent for Org: {org.name}")
+        return {"status": "success", "org_id": organization_id, "sent_at": str(timezone.now())}
 
     except Organization.DoesNotExist as e:
-        # 特殊處理：如果資料庫根本找不到這個 Organization ID，屬於資料異常，重試也沒用
-        # 紀錄 Error Log 後直接拋出異常，不觸發 self.retry()
         logger.error(f"[Celery Worker] Organization {organization_id} not found. Skipping retry.")
         raise e
 
     except Exception as exc:
-        # 通用異常處理：若是網路波動、Email 服務暫時連不上等問題
-        logger.warning(f"[Celery Worker] Failed to send email for {organization_id}. Retrying... Error: {exc}")
-        
-        # 自動重試核心點：拋出 self.retry()，Celery 會自動將這個任務重新塞回佇列，60 秒後再試
+        logger.warning(f"[Celery Worker] Failed to send welcome email for {organization_id}. Retrying... Error: {exc}")
         raise self.retry(exc=exc)
