@@ -115,33 +115,34 @@ def stripe_webhook_view(request):
         print(f"[Webhook Error] Service Exception: {e}")
         logger.error(f"[Webhook Error] Service Exception: {e}", exc_info=True)
         return JsonResponse({"error": "Internal server error"}, status=500)
-    
 
-import traceback
 
 class CreateCheckoutSessionView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
 
     def post(self, request):
-        # 1. 檢查 API Key 是否有正確載入
         if not stripe.api_key:
-            print("[Stripe Error]: STRIPE_SECRET_KEY is not configured in settings!")
-            return Response({"detail": "Stripe secret key missing"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"detail": "Stripe secret key missing"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
         price_id = request.data.get("price_id")
-        org_id = request.headers.get("X-Organization-ID")
-
-        print(f"DEBUG: Received price_id={price_id}, org_id={org_id}")
+        org_id = request.headers.get("X-Organization-ID") or request.data.get("organization_id")
 
         if not price_id or not org_id:
-            return Response({"detail": "Missing price_id or X-Organization-ID header"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Missing price_id or X-Organization-ID header"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+            
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=[{"price": price_id, "quantity": 1}],
-                mode="subscription",
+                mode="payment",
                 client_reference_id=org_id,
                 metadata={"organization_id": org_id},
                 success_url=f"{frontend_url}/dashboard/billing?success=true",
@@ -150,11 +151,9 @@ class CreateCheckoutSessionView(APIView):
             )
             return Response({"url": checkout_session.url})
         except Exception as e:
-            # 2. 將詳細的錯誤資訊與 Traceback 印到 Terminal Console
-            print("[Stripe Checkout Exception]:", str(e))
-            traceback.print_exc()
+            logger.error(f"[Stripe Checkout Exception]: {str(e)}")
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
 
 class SubscriptionStatusView(APIView):
     """
@@ -176,18 +175,16 @@ class SubscriptionStatusView(APIView):
                 "cancel_at_period_end": False,
             })
 
-        # 判斷是否處於預約取消狀態
         is_canceling = bool(sub.cancel_at_period_end or sub.status == "canceling")
 
         return Response({
             "plan": getattr(sub, 'plan', 'PRO'),
-            "status": "canceling" if is_canceling else sub.status, # 若預約取消，狀態統一回傳 canceling
+            "status": "canceling" if is_canceling else sub.status,
             "monthly_api_quota": sub.monthly_api_quota,
             "current_period_end": sub.current_period_end,
             "cancel_at_period_end": is_canceling,
         })
-    
-    
+
 
 class GoogleLoginView(SocialLoginView):
     """
@@ -535,39 +532,6 @@ class CustomerPortalView(APIView):
         
 
 
-class CancelSubscriptionView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request):
-        org_id = request.headers.get("X-Organization-ID")
-        if not org_id:
-            return Response({"error": "Missing X-Organization-ID header."}, status=400)
-
-        sub = Subscription.objects.filter(organization_id=org_id).first()
-        if not sub:
-            return Response({"error": "No subscription found for this organization."}, status=404)
-
-        if sub.stripe_subscription_id and sub.stripe_subscription_id.startswith("sub_"):
-            try:
-                stripe.Subscription.modify(
-                    sub.stripe_subscription_id,
-                    cancel_at_period_end=True
-                )
-            except stripe.error.StripeError as e:
-                logger.warning(f"Stripe API Cancel Notice: {str(e)}")
-
-        # 同時更新 status 與 cancel_at_period_end 欄位
-        sub.status = "canceling"
-        sub.cancel_at_period_end = True
-        sub.save()
-
-        return Response({
-            "message": "Subscription will be canceled at the end of current billing period.",
-            "status": "canceling",
-            "cancel_at_period_end": True
-        })
-    
-
 class ExecuteCoreTaskView(APIView):
     """
     模擬耗用 API 配額的核心業務 API
@@ -580,12 +544,14 @@ class ExecuteCoreTaskView(APIView):
             "status": "success",
             "message": "Task executed successfully! 1 API quota consumed."
         })
-    
+
+
+
 class ReactivateSubscriptionView(APIView):
     """
-    將即將到期的訂閱恢復為自動續訂 (cancel_at_period_end = False)
+    將即將到期的訂閱恢復為自動續訂
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
 
     def post(self, request):
         org_id = request.headers.get("X-Organization-ID")
