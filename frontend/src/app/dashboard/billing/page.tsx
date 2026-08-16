@@ -259,16 +259,6 @@ export default function BillingPage() {
                   {plan.period && <span className="text-xs text-gray-500 ml-1">{plan.period}</span>}
                 </div>
 
-                {/* 💡 專案與成員配額說明 */}
-                <div className="mt-3 space-y-1">
-                  <p className="text-xs font-semibold text-blue-600">
-                    📁 Up to {plan.projectLimit} Projects
-                  </p>
-                  <p className="text-xs font-semibold text-gray-500">
-                    👥 {plan.memberLimit ? `Up to ${plan.memberLimit} Team Members` : "Unlimited Team Members"}
-                  </p>
-                </div>
-
                 <ul className="mt-6 space-y-3 text-xs text-gray-600">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-center space-x-2">
