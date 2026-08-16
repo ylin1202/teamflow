@@ -17,9 +17,9 @@ export default function Sidebar() {
       <div className="p-6">
         <div className="flex items-center space-x-3 mb-8">
           <div className="h-9 w-9 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-md">
-            S
+            T
           </div>
-          <span className="text-xl font-bold text-gray-800 tracking-tight">SaaS App</span>
+          <span className="text-xl font-bold text-gray-800 tracking-tight">TeamFlow</span>
         </div>
 
         <nav className="space-y-1">
