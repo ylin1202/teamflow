@@ -30,8 +30,9 @@ class ProjectAdmin(admin.ModelAdmin):
 
 @admin.register(Subscription)
 class SubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("organization", "status", "monthly_api_quota", "current_period_end")
-    list_filter = ("status",)
+    list_display = ("organization", "plan", "max_projects", "status", "current_period_start", "current_period_end")
+    list_filter = ("plan", "status")
+    search_fields = ("organization__name", "stripe_subscription_id", "stripe_customer_id")
 
 @admin.register(StripeEventLog)
 class StripeEventLogAdmin(admin.ModelAdmin):
