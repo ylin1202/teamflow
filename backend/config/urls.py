@@ -20,7 +20,6 @@ from core.views import (
     OrganizationInvitationViewSet,
     CreateCheckoutSessionView,
     SubscriptionStatusView,
-    QuotaUsageView,
     CustomerPortalView,
     TaskViewSet,
     DocumentViewSet,
@@ -47,7 +46,6 @@ api_patterns = [
     # Billing & Quotas
     path("billing/checkout/", CreateCheckoutSessionView.as_view(), name="billing_checkout"),
     path("billing/subscription/", SubscriptionStatusView.as_view(), name="billing_subscription"),
-    path("billing/usage/", QuotaUsageView.as_view(), name="quota_usage"),
     path("billing/project-usage/", ProjectQuotaUsageView.as_view(), name="project_quota_usage"),
     path("billing/portal/", CustomerPortalView.as_view(), name="billing_portal"),
     
