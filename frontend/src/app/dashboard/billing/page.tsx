@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useOrgStore } from "@/store/useOrgStore";
 import api from "@/lib/api";
@@ -19,7 +19,7 @@ const PLANS = [
     priceId: "",
     price: "$0",
     projectLimit: 5,
-    memberLimit: 3, // 團隊人數上限 3 人
+    memberLimit: 3,
     features: [
       "Up to 5 Projects",
       "Up to 3 Team Members",
@@ -56,7 +56,7 @@ const PLANS = [
   },
 ];
 
-export default function BillingPage() {
+function BillingContent() {
   const { currentOrg, fetchOrganizations } = useOrgStore();
   const searchParams = useSearchParams();
   const [usage, setUsage] = useState<OrgProjectUsage | null>(null);
@@ -143,14 +143,11 @@ export default function BillingPage() {
     }
   };
 
-  // 💡 關鍵修復：優先讀取 usage API 回傳的最新 Plan，再退回 currentOrg.plan
   const currentPlanKey = usage?.plan?.toUpperCase() || currentOrg?.plan?.toUpperCase() || "FREE";
-  
-  // 取得當前方案層級數值 (FREE=1, PRO=2, ENTERPRISE=3)
   const currentLevel = PLANS.find((p) => p.key === currentPlanKey)?.level || 1;
 
   const currentUsed = usage?.current_projects ?? 0;
-  const currentLimit = usage?.max_projects ?? (currentPlanKey === "PRO" ? 25 : currentPlanKey === "ENTERPRISE" ? 50 : 5);
+  const currentLimit = usage?.max_projects ?? (currentPlanKey === "PRO" ? 25 : currentPlanKey === "ENTERPRISE" ? 150 : 5);
   const usedPercentage = Math.min(100, Math.round((currentUsed / currentLimit) * 100));
 
   const progressBarColor =
@@ -287,5 +284,19 @@ export default function BillingPage() {
         })}
       </div>
     </div>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-64 items-center justify-center text-sm text-gray-500">
+          Loading billing details...
+        </div>
+      }
+    >
+      <BillingContent />
+    </Suspense>
   );
 }
