@@ -24,6 +24,73 @@ import {
 // 動態引入 ReactMarkdown 避免 SSR / ESM 型別衝突
 const ReactMarkdown = dynamic(() => import("react-markdown"), { ssr: false });
 
+// 自訂 Markdown 渲染元件：精確區分 pre（多行代碼塊）與 code（行內代碼標籤）
+const markdownComponents = {
+  h1: ({ ...props }: any) => (
+    <h1 className="text-xl font-bold text-gray-900 border-b border-gray-200 pb-2 mt-5 mb-3 tracking-tight" {...props} />
+  ),
+  h2: ({ ...props }: any) => (
+    <h2 className="text-base font-bold text-gray-800 border-b border-gray-100 pb-1 mt-4 mb-2 tracking-tight" {...props} />
+  ),
+  h3: ({ ...props }: any) => (
+    <h3 className="text-sm font-semibold text-gray-800 mt-3 mb-1.5" {...props} />
+  ),
+  p: ({ ...props }: any) => (
+    <p className="text-gray-700 text-sm leading-relaxed mb-2.5" {...props} />
+  ),
+  ul: ({ ...props }: any) => (
+    <ul className="list-disc list-outside pl-5 space-y-1 mb-3 text-sm text-gray-700" {...props} />
+  ),
+  ol: ({ ...props }: any) => (
+    <ol className="list-decimal list-outside pl-5 space-y-1 mb-3 text-sm text-gray-700" {...props} />
+  ),
+  li: ({ ...props }: any) => <li className="leading-relaxed text-gray-700" {...props} />,
+
+  // 多行程式碼區塊容器
+  pre: ({ ...props }: any) => (
+    <pre className="bg-gray-900 text-gray-100 p-4 rounded-xl overflow-x-auto text-xs font-mono my-3 shadow-inner" {...props} />
+  ),
+
+  // 行內代碼標籤 vs 多行代碼內部標籤判斷
+  code: ({ className, children, ...props }: any) => {
+    const isCodeBlock =
+      /language-(\w+)/.test(className || "") ||
+      (typeof children === "string" && children.includes("\n"));
+
+    if (isCodeBlock) {
+      return (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code
+        className="bg-gray-100 text-pink-600 px-1.5 py-0.5 mx-0.5 rounded text-xs font-mono font-medium border border-gray-200/60"
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  },
+
+  blockquote: ({ ...props }: any) => (
+    <blockquote className="border-l-4 border-blue-500 pl-3.5 py-1.5 text-gray-600 italic bg-blue-50/50 rounded-r-lg my-3 text-xs leading-relaxed" {...props} />
+  ),
+  table: ({ ...props }: any) => (
+    <div className="overflow-x-auto my-3 border border-gray-200 rounded-lg">
+      <table className="w-full text-left text-xs border-collapse divide-y divide-gray-200" {...props} />
+    </div>
+  ),
+  th: ({ ...props }: any) => (
+    <th className="bg-gray-50 px-3 py-2 font-semibold text-gray-700 border-b border-gray-200" {...props} />
+  ),
+  td: ({ ...props }: any) => (
+    <td className="px-3 py-2 text-gray-600 border-b border-gray-100" {...props} />
+  ),
+  hr: () => <hr className="my-4 border-gray-200" />,
+};
+
 interface Task {
   id: string;
   project: string;
@@ -50,10 +117,10 @@ export default function ProjectDetailPage() {
   // 只有 OWNER 或 ADMIN 才能看到並執行刪除 (MEMBER 會自動隱藏刪除按鈕)
   const canDelete = currentOrg?.role === "OWNER" || currentOrg?.role === "ADMIN";
 
-  // Tab 狀態: 'kanban' 或 'docs'
+  // Tab 狀態
   const [activeTab, setActiveTab] = useState<"kanban" | "docs">("kanban");
 
-  // Kanban Tasks 狀態
+  // Tasks 狀態
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
@@ -69,7 +136,7 @@ export default function ProjectDetailPage() {
   const [editTaskDescTab, setEditTaskDescTab] = useState<"edit" | "preview">("edit");
   const [isUpdatingTask, setIsUpdatingTask] = useState(false);
 
-  // Project Docs 狀態
+  // Docs 狀態
   const [docs, setDocs] = useState<Document[]>([]);
   const [docTitle, setDocTitle] = useState("");
   const [docContent, setDocContent] = useState("");
@@ -77,14 +144,14 @@ export default function ProjectDetailPage() {
   const [isDocLoading, setIsDocLoading] = useState(false);
   const [addDocTab, setAddDocTab] = useState<"edit" | "preview">("edit");
 
-  // Document 編輯狀態
+  // Doc 編輯狀態
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editDocTitle, setEditDocTitle] = useState("");
   const [editDocContent, setEditDocContent] = useState("");
   const [isEditDocLoading, setIsEditDocLoading] = useState(false);
   const [editDocTab, setEditDocTab] = useState<"edit" | "preview">("edit");
 
-  // 1. 抓取 Task 清單
+  // API 呼叫函式
   const fetchTasks = useCallback(async () => {
     if (!projectId || !currentOrg) return;
     try {
@@ -95,7 +162,6 @@ export default function ProjectDetailPage() {
     }
   }, [projectId, currentOrg]);
 
-  // 2. 抓取 Docs 清單
   const fetchDocs = useCallback(async () => {
     if (!projectId || !currentOrg) return;
     try {
@@ -113,7 +179,7 @@ export default function ProjectDetailPage() {
     }
   }, [currentOrg, projectId, fetchTasks, fetchDocs]);
 
-  // 新增 Task
+  // Task 操作
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskTitle.trim()) return;
@@ -187,7 +253,7 @@ export default function ProjectDetailPage() {
     }
   };
 
-  // 新增 Doc
+  // Doc 操作
   const handleCreateDoc = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!docTitle.trim()) return;
@@ -256,11 +322,13 @@ export default function ProjectDetailPage() {
     }
   };
 
-  // Task 卡片通用元件
+  // Kanban 卡片通用渲染
   const renderTaskCard = (t: Task) => (
-    <div key={t.id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3 hover:border-blue-300 transition">
+    <div
+      key={t.id}
+      className="bg-white p-3.5 rounded-xl border border-gray-200 shadow-sm space-y-2.5 hover:border-blue-300 transition"
+    >
       <div className="flex justify-between items-start gap-2">
-          {/* 編輯 Task 按鈕：所有人皆可編輯 */}
         <h4 className="font-semibold text-gray-800 text-sm leading-snug">{t.title}</h4>
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -270,8 +338,6 @@ export default function ProjectDetailPage() {
           >
             <Edit2 className="w-3.5 h-3.5" />
           </button>
-
-          {/* 💡 刪除 Task 按鈕：僅 OWNER 與 ADMIN 顯示 */}
           {canDelete && (
             <button
               onClick={() => handleDeleteTask(t.id)}
@@ -284,15 +350,15 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* 💡 移除 line-clamp-3，加入 max-h 與 overflow-y-auto 讓長內容可完整滾動查看且不破壞版面 */}
+      {/* 緊湊型 Markdown 容器 */}
       {t.description && (
-        <div className="text-xs text-gray-700 bg-gray-50/80 p-3 rounded-lg border border-gray-100 max-h-56 overflow-y-auto prose prose-xs prose-slate max-w-none">
-          <ReactMarkdown>{t.description}</ReactMarkdown>
+        <div className="text-xs text-gray-700 bg-gray-50/80 p-2.5 rounded-lg border border-gray-100 max-h-56 overflow-y-auto">
+          <ReactMarkdown components={markdownComponents}>{t.description}</ReactMarkdown>
         </div>
       )}
 
-      {/* 狀態切換 */}
-      <div className="pt-2 border-t border-gray-100 flex justify-between items-center text-xs">
+      {/* 底部按鈕列：微調 pt-1.5 讓上下視覺對稱 */}
+      <div className="pt-1.5 border-t border-gray-100 flex justify-between items-center text-xs">
         {t.status === "todo" && (
           <div className="ml-auto">
             <button
@@ -389,7 +455,7 @@ export default function ProjectDetailPage() {
 
           {/* 新增 Task 表單 */}
           {isAddingTask && (
-            <form onSubmit={handleCreateTask} className="bg-white p-5 border rounded-xl shadow-sm space-y-4 max-w-2xl">
+            <form onSubmit={handleCreateTask} className="bg-white p-5 border border-gray-200 rounded-xl shadow-sm space-y-4 max-w-2xl">
               <h3 className="font-semibold text-sm text-gray-800">Create New Task</h3>
               <input
                 type="text"
@@ -400,7 +466,7 @@ export default function ProjectDetailPage() {
                 required
               />
 
-              <div className="border rounded-lg p-2 space-y-2">
+              <div className="border border-gray-200 rounded-lg p-2 space-y-2">
                 <div className="flex items-center justify-between border-b pb-2 text-xs">
                   <span className="font-medium text-gray-500 flex items-center gap-1">
                     <FileText className="w-3.5 h-3.5" /> Description (Markdown)
@@ -428,11 +494,15 @@ export default function ProjectDetailPage() {
                     placeholder="Supports Markdown: **bold**, - list, `code`..."
                     value={taskDesc}
                     onChange={(e) => setTaskDesc(e.target.value)}
-                    className="w-full border-none outline-none text-sm h-24 text-gray-800 resize-none p-1"
+                    className="w-full border-none outline-none text-sm h-28 text-gray-800 resize-none p-1"
                   />
                 ) : (
-                  <div className="prose prose-sm h-24 overflow-y-auto p-1 text-gray-800 bg-gray-50 rounded">
-                    {taskDesc ? <ReactMarkdown>{taskDesc}</ReactMarkdown> : <span className="text-gray-400 text-xs">Nothing to preview</span>}
+                  <div className="h-28 overflow-y-auto p-2 text-gray-800 bg-gray-50 rounded">
+                    {taskDesc ? (
+                      <ReactMarkdown components={markdownComponents}>{taskDesc}</ReactMarkdown>
+                    ) : (
+                      <span className="text-gray-400 text-xs italic">Nothing to preview</span>
+                    )}
                   </div>
                 )}
               </div>
@@ -522,8 +592,7 @@ export default function ProjectDetailPage() {
                 </select>
               </div>
 
-              {/* Task 描述 (支援 Markdown Edit / Preview) */}
-              <div className="border rounded-lg p-2 space-y-2">
+              <div className="border border-gray-200 rounded-lg p-2 space-y-2">
                 <div className="flex items-center justify-between border-b pb-2 text-xs">
                   <span className="font-medium text-gray-500 flex items-center gap-1">
                     <FileText className="w-3.5 h-3.5" /> Description (Markdown)
@@ -556,8 +625,12 @@ export default function ProjectDetailPage() {
                     placeholder="Task details in Markdown..."
                   />
                 ) : (
-                  <div className="prose prose-slate max-w-none text-sm text-gray-800 h-32 overflow-y-auto p-2 bg-gray-50 rounded">
-                    {editTaskDesc ? <ReactMarkdown>{editTaskDesc}</ReactMarkdown> : <span className="text-gray-400 text-xs italic">Nothing to preview</span>}
+                  <div className="h-32 overflow-y-auto p-2 bg-gray-50 rounded">
+                    {editTaskDesc ? (
+                      <ReactMarkdown components={markdownComponents}>{editTaskDesc}</ReactMarkdown>
+                    ) : (
+                      <span className="text-gray-400 text-xs italic">Nothing to preview</span>
+                    )}
                   </div>
                 )}
               </div>
@@ -598,7 +671,7 @@ export default function ProjectDetailPage() {
 
           {/* 新增 Document 表單 */}
           {isAddingDoc && (
-            <form onSubmit={handleCreateDoc} className="bg-white p-5 border rounded-xl shadow-sm space-y-4">
+            <form onSubmit={handleCreateDoc} className="bg-white p-5 border border-gray-200 rounded-xl shadow-sm space-y-4">
               <h3 className="font-semibold text-sm text-gray-800">Create New Spec / Document</h3>
               <input
                 type="text"
@@ -609,7 +682,7 @@ export default function ProjectDetailPage() {
                 required
               />
 
-              <div className="border rounded-lg p-2 space-y-2">
+              <div className="border border-gray-200 rounded-lg p-2 space-y-2">
                 <div className="flex items-center justify-between border-b pb-2 text-xs">
                   <span className="font-medium text-gray-500 flex items-center gap-1">
                     <FileText className="w-3.5 h-3.5" /> Spec Content (Markdown)
@@ -636,15 +709,15 @@ export default function ProjectDetailPage() {
 
                 {addDocTab === "edit" ? (
                   <textarea
-                    placeholder="Write Markdown content here... (Supports # Heading, **bold**, lists, code blocks)"
+                    placeholder="Write Markdown content here... (Supports # Heading, **bold**, lists, code blocks, tables)"
                     value={docContent}
                     onChange={(e) => setDocContent(e.target.value)}
-                    className="w-full border-none outline-none text-sm font-mono text-gray-800 h-64 resize-none p-1"
+                    className="w-full border-none outline-none text-sm font-mono text-gray-800 h-64 resize-none p-2"
                   />
                 ) : (
-                  <div className="prose prose-slate max-w-none text-sm text-gray-800 h-64 overflow-y-auto p-3 bg-gray-50/50 rounded-lg">
+                  <div className="min-h-64 max-h-[500px] overflow-y-auto p-4 bg-gray-50/50 rounded-lg">
                     {docContent ? (
-                      <ReactMarkdown>{docContent}</ReactMarkdown>
+                      <ReactMarkdown components={markdownComponents}>{docContent}</ReactMarkdown>
                     ) : (
                       <span className="text-gray-400 text-xs italic">Nothing to preview. Start typing in Edit tab.</span>
                     )}
@@ -673,13 +746,13 @@ export default function ProjectDetailPage() {
 
           {/* Document 清單 */}
           {docs.length === 0 ? (
-            <div className="bg-white border rounded-xl p-8 text-center text-gray-400 text-sm">
+            <div className="bg-white border border-gray-200 rounded-xl p-10 text-center text-gray-400 text-sm">
               No spec documents written for this project yet.
             </div>
           ) : (
             <div className="space-y-6">
               {docs.map((doc) => (
-                <div key={doc.id} className="bg-white border rounded-xl p-6 shadow-sm space-y-4">
+                <div key={doc.id} className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-4">
                   {editingDocId === doc.id ? (
                     <form onSubmit={(e) => handleUpdateDoc(e, doc.id)} className="space-y-4">
                       <div className="flex items-center justify-between border-b pb-3">
@@ -710,7 +783,7 @@ export default function ProjectDetailPage() {
                         required
                       />
 
-                      <div className="border rounded-lg p-2 space-y-2">
+                      <div className="border border-gray-200 rounded-lg p-2 space-y-2">
                         <div className="flex items-center justify-between border-b pb-2 text-xs">
                           <span className="font-medium text-gray-500 flex items-center gap-1">
                             <FileText className="w-3.5 h-3.5" /> Edit Content
@@ -739,12 +812,12 @@ export default function ProjectDetailPage() {
                           <textarea
                             value={editDocContent}
                             onChange={(e) => setEditDocContent(e.target.value)}
-                            className="w-full border-none outline-none text-sm font-mono text-gray-800 h-64 resize-none p-1"
+                            className="w-full border-none outline-none text-sm font-mono text-gray-800 h-64 resize-none p-2"
                           />
                         ) : (
-                          <div className="prose prose-slate max-w-none text-sm text-gray-800 h-64 overflow-y-auto p-3 bg-gray-50/50 rounded-lg">
+                          <div className="min-h-64 max-h-[500px] overflow-y-auto p-4 bg-gray-50/50 rounded-lg">
                             {editDocContent ? (
-                              <ReactMarkdown>{editDocContent}</ReactMarkdown>
+                              <ReactMarkdown components={markdownComponents}>{editDocContent}</ReactMarkdown>
                             ) : (
                               <span className="text-gray-400 text-xs italic">Nothing to preview.</span>
                             )}
@@ -753,18 +826,19 @@ export default function ProjectDetailPage() {
                       </div>
                     </form>
                   ) : (
-                    <>
-                      <div className="border-b pb-3 flex justify-between items-center">
+                    <div>
+                      {/* 文件頂部 Header */}
+                      <div className="border-b border-gray-100 pb-4 flex justify-between items-start">
                         <div>
-                          <h3 className="font-bold text-gray-800 text-lg">{doc.title}</h3>
-                          <span className="text-[11px] font-mono text-gray-400">
-                            Updated: {doc.updated_at ? new Date(doc.updated_at).toLocaleString() : doc.id}
+                          <h3 className="font-bold text-gray-900 text-xl tracking-tight">{doc.title}</h3>
+                          <span className="text-xs text-gray-400 mt-1 inline-block">
+                            Last updated: {doc.updated_at ? new Date(doc.updated_at).toLocaleString() : "Just now"}
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleStartEditDoc(doc)}
-                            className="flex items-center gap-1 px-2.5 py-1 text-xs border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 hover:text-blue-600 transition"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 hover:text-blue-600 transition shadow-sm"
                           >
                             <Edit2 className="w-3.5 h-3.5" /> Edit
                           </button>
@@ -773,7 +847,7 @@ export default function ProjectDetailPage() {
                           {canDelete && (
                             <button
                               onClick={() => handleDeleteDoc(doc.id)}
-                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
                               title="Delete Document"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -781,10 +855,14 @@ export default function ProjectDetailPage() {
                           )}
                         </div>
                       </div>
-                      <div className="prose prose-slate max-w-none text-sm text-gray-800 bg-gray-50/50 p-4 rounded-lg border">
-                        <ReactMarkdown>{doc.content || "*No content provided.*"}</ReactMarkdown>
+
+                      {/* 文件 Markdown 內容渲染區 */}
+                      <div className="pt-4 text-gray-800 text-sm leading-relaxed">
+                        <ReactMarkdown components={markdownComponents}>
+                          {doc.content || "*No content provided.*"}
+                        </ReactMarkdown>
                       </div>
-                    </>
+                    </div>
                   )}
                 </div>
               ))}
