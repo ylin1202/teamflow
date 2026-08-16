@@ -3,7 +3,7 @@ from core.models import OrganizationMember, OrganizationRole
 
 class HasOrganizationRole(permissions.BasePermission):
     """
-    檢查 User 在特定 Organization 中是否具備指定角色的權限基類
+    Base permission class to check if a user holds the required role within a specific organization.
     """
     allowed_roles = []
 
@@ -11,12 +11,12 @@ class HasOrganizationRole(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        # 從 URL kwargs 或是 Request Header/Query 中取得 org_id
+        # Extract org_id from URL kwargs or request headers
         org_id = view.kwargs.get("org_id") or request.headers.get("X-Organization-ID")
         if not org_id:
             return False
 
-        # 查詢目前使用者在該組織的中間表紀錄與角色
+        # Query the user's membership and role in the specified organization
         membership = OrganizationMember.objects.filter(
             organization_id=org_id,
             user=request.user
@@ -25,13 +25,13 @@ class HasOrganizationRole(permissions.BasePermission):
         if not membership:
             return False
 
-        # 將當前 membership 暫存於 request 物件，方便 View 內部後續調用，避免二次 Query
+        # Cache the membership record on the request object for downstream views to prevent redundant queries
         request.org_membership = membership
         return membership.role in self.allowed_roles
 
 
 class IsOrganizationMember(HasOrganizationRole):
-    """一般成員層級：OWNER, ADMIN, MEMBER 皆可讀取"""
+    """General member tier: Accessible by OWNER, ADMIN, and MEMBER roles."""
     allowed_roles = [
         OrganizationRole.OWNER, 
         OrganizationRole.ADMIN, 
@@ -40,7 +40,7 @@ class IsOrganizationMember(HasOrganizationRole):
 
 
 class IsOrganizationAdmin(HasOrganizationRole):
-    """管理員層級：僅 OWNER, ADMIN 可執行編輯/刪除"""
+    """Admin tier: Restricted to OWNER and ADMIN roles for modifying resources."""
     allowed_roles = [
         OrganizationRole.OWNER, 
         OrganizationRole.ADMIN
@@ -48,7 +48,7 @@ class IsOrganizationAdmin(HasOrganizationRole):
 
 
 class IsOrganizationOwner(HasOrganizationRole):
-    """最高權限層級：僅 OWNER 可執行敏感情節（如解散團隊、轉讓權限、解約）"""
+    """Owner tier: Restricted exclusively to OWNER for sensitive operations (e.g., deleting workspace, transferring ownership, billing)."""
     allowed_roles = [
         OrganizationRole.OWNER
     ]

@@ -17,17 +17,17 @@ logger = logging.getLogger(__name__)
 def send_invitation_email_task(
     self, email: str, organization_name: str, accept_url: str, sender_email: str, role: str
 ):
-    """【背景任務】發送團隊邀請信"""
+    """[Background Task] Send team workspace invitation email."""
     try:
         logger.info(f"[Celery Worker] Sending invitation email to {email} for org: {organization_name}")
         
-        subject = f"【{organization_name}】團隊邀請函"
+        subject = f"[{organization_name}] Team Workspace Invitation"
         message = (
-            f"您好，\n\n"
-            f"{sender_email} 邀請您加入團隊「{organization_name}」（權限: {role}）。\n\n"
-            f"請點擊下方連結接受邀請：\n"
+            f"Hello,\n\n"
+            f"{sender_email} has invited you to join the team '{organization_name}' with role '{role}'.\n\n"
+            f"Please click the link below to accept the invitation:\n"
             f"{accept_url}\n\n"
-            f"此連結將在 7 天後失效。"
+            f"This link will expire in 7 days."
         )
 
         send_mail(
@@ -35,7 +35,7 @@ def send_invitation_email_task(
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
-            fail_silently=False,  # 設為 False 讓失敗時拋出 Exception 觸發 Celery 重試
+            fail_silently=False,  # Set to False to raise exceptions and trigger Celery retry
         )
         logger.info(f"[Celery Worker] Invitation email successfully sent to {email}")
         return {"status": "success", "email": email}
@@ -52,18 +52,19 @@ def send_invitation_email_task(
     acks_late=True,
 )
 def send_subscription_welcome_email(self, organization_id: str):
-    """【背景任務】付款成功發送歡迎信"""
+    """[Background Task] Send welcome confirmation email upon successful subscription."""
     try:
         org = Organization.objects.get(id=organization_id)
         owner_email = org.owner.email
         logger.info(f"[Celery Worker] Sending welcome email to {owner_email}")
 
-        subject = f"【{org.name}】感謝升級至 {org.plan} 方案！"
+        subject = f"[{org.name}] Thank you for upgrading to the {org.plan} plan!"
         message = (
-            f"親愛的 {org.owner.username} 您好，\n\n"
-            f"您的團隊「{org.name}」已成功升級至 {org.plan} 方案！\n"
-            f"您現在享有最新的專案配額與完整權限功能。\n\n"
-            f"祝使用愉快！"
+            f"Dear {org.owner.username},\n\n"
+            f"Your team '{org.name}' has been successfully upgraded to the {org.plan} plan!\n"
+            f"You now have access to increased project quotas and all premium features.\n\n"
+            f"Best regards,\n"
+            f"The TeamFlow Team"
         )
 
         send_mail(

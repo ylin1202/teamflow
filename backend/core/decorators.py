@@ -16,7 +16,7 @@ redis_client = redis.Redis.from_url(REDIS_URL)
 def enforce_quota(view_func):
     @wraps(view_func)
     def _wrapped_view(request, *args, **kwargs):
-        # 1. 取得 Organization ID (從 Header 讀取)
+        # Extract Organization ID from request headers
         org_id = request.headers.get("X-Organization-ID")
 
         if org_id:
@@ -28,7 +28,7 @@ def enforce_quota(view_func):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 防護：驗證傳進來的 org_id 是否為合法 UUID
+        # Validate that the incoming org_id is a valid UUID
         try:
             uuid.UUID(str(org_id))
         except ValueError:
@@ -37,20 +37,20 @@ def enforce_quota(view_func):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 2. 取得 Subscription 配額上限
+        # Retrieve subscription quota limit (defaults to 1000 if not found)
         sub = Subscription.objects.filter(organization_id=org_id).first()
         limit = sub.monthly_api_quota if sub else 1000
 
-        # 3. 組出 Redis Key (格式: quota:org:{org_id}:{YYYY-MM}:used)
+        # Construct Redis key (Format: quota:org:{org_id}:{YYYY-MM}:used)
         current_month = datetime.now().strftime("%Y-%m")
         redis_key = f"quota:org:{org_id}:{current_month}:used"
 
         try:
-            # 4. 取得當前已使用次數
+            # Retrieve current usage count
             current_used = redis_client.get(redis_key)
             used_count = int(current_used) if current_used else 0
 
-            # 5. 判斷是否爆表 (Quota Exceeded)
+            # Check if quota limit has been reached
             if used_count >= limit:
                 return Response(
                     {
@@ -62,7 +62,6 @@ def enforce_quota(view_func):
                     status=status.HTTP_429_TOO_MANY_REQUESTS
                 )
 
-            # 6. 未爆表 $\rightarrow$ Redis 計數 +1
             redis_client.incr(redis_key)
 
         except redis.RedisError as e:

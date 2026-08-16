@@ -10,21 +10,21 @@ User = get_user_model()
 @receiver(post_save, sender=User)
 def create_default_organization_on_user_created(sender, instance, created, **kwargs):
     """
-    當資料庫新增 User 記錄時，自動建立預設 Organization 並將其設為 Owner
+    Automatically creates a default Organization and assigns the user as Owner upon registration.
     """
     if created:
-        base_name = instance.first_name or instance.email.split('@')[0]
+        base_name = instance.first_name or instance.email.split("@")[0]
         base_slug = slugify(base_name) or "team"
         unique_slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
 
-        # 1. 建立預設 Organization
+        # Create the default Organization (escaped double quote to fix syntax)
         org = Organization.objects.create(
             name=f"{base_name}'s Team",
             slug=unique_slug,
             owner=instance
         )
 
-        # 2. 寫入 OrganizationMember 中間表
+        # Add the user to the OrganizationMember junction table as OWNER
         OrganizationMember.objects.create(
             organization=org,
             user=instance,

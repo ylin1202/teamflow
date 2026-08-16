@@ -24,7 +24,7 @@ DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-m4e)-=jiuki(o#s82j(ltb2(+@8ouu+&@_4111r^h89uz7f9tm'
 
-# 允許 localhost, 127.0.0.1 以及 Docker 容器服務名稱
+# Allow localhost, 127.0.0.1, Docker container service names, and wildcards
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'web', 'saas_django', '*']
 
 # Application definition
@@ -43,7 +43,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'dj_rest_auth',
     
-    # 1. 補上 Swagger / OpenAPI 3.0 自動文件生成套件
+    # 1. Swagger / OpenAPI 3.0 auto-documentation generator
     'drf_spectacular',
     
     # Allauth & OAuth Providers
@@ -51,7 +51,7 @@ INSTALLED_APPS = [
     'allauth',
     'allauth.account',
     'allauth.socialaccount',
-    'allauth.socialaccount.providers.google', # Google Provider
+    'allauth.socialaccount.providers.google',  # Google Provider
     
     # Local apps
     'core',
@@ -59,19 +59,19 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        # 如果你使用 dj_rest_auth / authtoken
+        # If using dj_rest_auth / authtoken
         'rest_framework.authentication.TokenAuthentication',
-        # 如果使用 SimpleJWT
+        # If using SimpleJWT
         # 'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
-    # 2. 指定 OpenAPI Schema 生成器為 drf-spectacular
+    # 2. Specify OpenAPI schema generator for drf-spectacular
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
-# 3. drf-spectacular 詳細設定 (支援 Header 傳送 X-Organization-ID)
+# 3. drf-spectacular configuration (Supports custom X-Organization-ID header)
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Multi-Tenant SaaS Workspace API',
     'DESCRIPTION': 'Enterprise-grade SaaS platform with Multi-Tenancy RBAC, Stripe Billing, and Quota Engine.',
@@ -90,30 +90,30 @@ SPECTACULAR_SETTINGS = {
     'SECURITY': [{'X-Organization-ID': []}],
 }
 
-# django.contrib.sites 所需的預設站台 ID
+# Default Site ID required by django.contrib.sites
 SITE_ID = 1
 
-# 帳號驗證策略設定 (關閉一般帳密，強制使用 Google 登入)
-ACCOUNT_LOGIN_METHODS = {'email'}   # 登入識別欄位採用 Email
-ACCOUNT_SIGNUP_FIELDS = ['email*'] # 註冊必填欄位 (新版 allauth 語法)
-SOCIALACCOUNT_QUERY_EMAIL = True     # 向 Google 授權頁面請求使用者 Email 權限
+# Authentication strategy: Disable traditional password auth, enforce Google OAuth
+ACCOUNT_LOGIN_METHODS = {'email'}   # Use email as the primary login identifier
+ACCOUNT_SIGNUP_FIELDS = ['email*'] # Required signup field (latest allauth syntax)
+SOCIALACCOUNT_QUERY_EMAIL = True     # Request user email permission during Google OAuth consent
 
-# 徹底關閉一般帳密註冊與郵件驗證 (全權交給 Google 驗證身分)
-ACCOUNT_EMAIL_VERIFICATION = 'none'  # 不需寄送信箱驗證信 (Google 已驗證過 email)
-SOCIALACCOUNT_AUTO_SIGNUP = True     # 使用者第一次用 Google 登入時，自動建立帳號，不跳出二次確認表單
-ACCOUNT_ALLOW_REGISTRATION = False   # 關閉傳統 Django 帳密註冊表單 (預防駭客直接 Post 一般註冊 API)
+# Disable traditional username/password registration and email verification (delegated to Google)
+ACCOUNT_EMAIL_VERIFICATION = 'none'  # Skip verification emails (pre-verified by Google)
+SOCIALACCOUNT_AUTO_SIGNUP = True     # Automatically provision account on first Google login without prompt
+ACCOUNT_ALLOW_REGISTRATION = False   # Disable traditional registration form (prevents direct POST signup abuse)
 
 
-# Google OAuth 2.0 憑證與 Scope 設定 (透過環境變數保護 Client ID 與 Secret)
+# Google OAuth 2.0 credentials and scope configuration (protected via environment variables)
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
-        # 請求 Google 授權的範圍：取得使用者 basic profile (名字/頭像) 與 email
+        # Scopes requested: Basic profile (name/avatar) and email
         'SCOPE': [
             'profile',
             'email',
         ],
         'AUTH_PARAMS': {
-            'access_type': 'online',  # 不需要背景 offline 存取權 (不需要 refresh token)
+            'access_type': 'online',  # No offline access needed (no refresh token required)
         },
         'APP': {
             'client_id': os.getenv('GOOGLE_CLIENT_ID', ''),
@@ -124,7 +124,7 @@ SOCIALACCOUNT_PROVIDERS = {
 }
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -132,27 +132,27 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    "allauth.account.middleware.AccountMiddleware",
+    'allauth.account.middleware.AccountMiddleware',
 ]
 
-# 允許 Next.js 前端 3000 Port 存取
+# Allowed origins for Next.js frontend client (Port 3000)
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
 ]
 
-# 允許前端帶上自訂的 Header X-Organization-ID
+# Allow custom X-Organization-ID header in CORS requests
 CORS_ALLOW_HEADERS = [
-    "accept",
-    "accept-encoding",
-    "authorization",
-    "content-type",
-    "dnt",
-    "origin",
-    "user-agent",
-    "x-csrftoken",
-    "x-requested-with",
-    "x-organization-id", 
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-organization-id',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -184,10 +184,10 @@ DATABASES = {
         'NAME': os.getenv('MYSQL_DATABASE', 'saas_db'),
         'USER': os.getenv('MYSQL_USER', 'saas_user'),
         'PASSWORD': os.getenv('MYSQL_PASSWORD', 'saas_password'),
-        'HOST': os.getenv('MYSQL_HOST', 'db'),  # Docker Bridge 網路下對應 saas_mysql 服務名稱 'db'
+        'HOST': os.getenv('MYSQL_HOST', 'db'),  # Matches saas_mysql service 'db' on Docker Bridge network
         'PORT': os.getenv('MYSQL_PORT', '3306'),
 
-        # 加上 UTF-8 表情符號與嚴格模式設定
+        # Configure utf8mb4 charset and strict SQL mode
         'OPTIONS': {
             'charset': 'utf8mb4',
             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
@@ -227,54 +227,54 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
-# 5. Swagger UI 靜態檔案路徑 (部署時收集靜態檔使用)
+# 5. Static root path for collectstatic (used by Swagger UI & Admin in production)
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
-AUTH_USER_MODEL = "core.User"
+AUTH_USER_MODEL = 'core.User'
 
 
-# 6. Redis 設定 (分散式鎖與快取)
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+# 6. Redis configuration (Distributed locking and caching)
+REDIS_URL = os.getenv('REDIS_URL', 'redis://redis:6379/0')
 
 
-# Celery & RabbitMQ 訊息佇列設定
-RABBITMQ_USER = os.getenv("RABBITMQ_DEFAULT_USER", "guest")
-RABBITMQ_PASS = os.getenv("RABBITMQ_DEFAULT_PASS", "guest")
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", "5672")
+# Celery & RabbitMQ Message Broker Configuration
+RABBITMQ_USER = os.getenv('RABBITMQ_DEFAULT_USER', 'guest')
+RABBITMQ_PASS = os.getenv('RABBITMQ_DEFAULT_PASS', 'guest')
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'rabbitmq')
+RABBITMQ_PORT = os.getenv('RABBITMQ_PORT', '5672')
 
-# Celery Broker 使用 RabbitMQ (amqp 協定)
-CELERY_BROKER_URL = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}//"
+# RabbitMQ Broker URL (AMQP Protocol)
+CELERY_BROKER_URL = f'amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}//'
 
-# 使用 Redis 作為 Task Result Backend (儲存異步任務執行結果)
+# Use Redis as the Task Result Backend
 CELERY_RESULT_BACKEND = REDIS_URL
 
-# 訊息序列化格式設定
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
+# Serialization configuration
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
-# 商業級可靠性與死信佇列 (DLQ) 關鍵配置
-CELERY_TASK_ACKS_LATE = True  # Worker 執行完畢並成功後才傳回 Ack，避免執行途中 Worker 崩潰丟失任務
-CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # 每次只預取 1 個任務，防止長任務被個別 Worker 獨佔
+# Enterprise-grade reliability and task execution controls
+CELERY_TASK_ACKS_LATE = True  # Acknowledge task only after completion to avoid task loss on worker crash
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Fetch one task per worker process to prevent queue hogging
 
-# STRIPE 設定
-STRIPE_PUBLIC_KEY = os.getenv("STRIPE_PUBLIC_KEY", "")
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+# Stripe Payment & Billing Configuration
+STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY', '')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
-STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "")
-STRIPE_PRICE_ENTERPRISE = os.getenv("STRIPE_PRICE_ENTERPRISE", "")
+STRIPE_PRICE_PRO = os.getenv('STRIPE_PRICE_PRO', '')
+STRIPE_PRICE_ENTERPRISE = os.getenv('STRIPE_PRICE_ENTERPRISE', '')
 
 
-# 電子郵件設定
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+# SMTP Email Configuration
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() == 'true'
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)

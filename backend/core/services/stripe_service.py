@@ -17,12 +17,12 @@ stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
 
 class StripeWebhookService:
     """
-    處理 Stripe Webhook 邏輯：
-    1. 結合 Redis 分散式鎖，防範極短時間內的重複併發請求 (Race Condition)
-    2. 結合 StripeEventLog 資料庫記錄，實現嚴格的「冪等性 (Idempotency)」
-    3. 使用 transaction.atomic() 確保金流狀態更新之原子性
-    4. 動態對應 Stripe Price ID 並自動更新 API 配額 (Quota)
-    5. 金流邊界事件處理 (扣款失敗 past_due)
+    Handles Stripe Webhook business logic:
+    1. Leverages Redis distributed locks to guard against rapid concurrent race conditions.
+    2. Enforces strict idempotency via StripeEventLog database records.
+    3. Guarantees transactional atomicity using transaction.atomic().
+    4. Dynamically maps Stripe Price IDs and updates organization subscription limits.
+    5. Manages boundary payment events (e.g., payment failures).
     """
     LOCK_EXPIRE_SECONDS = 60
 
@@ -39,7 +39,7 @@ class StripeWebhookService:
 
     @classmethod
     def handle_event(cls, event_data) -> bool:
-        # 1. 統一將 Stripe 物件或 dict 轉為標準 Python dict，避免 AttributeError
+        # Normalize Stripe event payloads/dicts into a standard Python dict to prevent AttributeErrors
         if hasattr(event_data, "to_dict_recursive"):
             event_data = event_data.to_dict_recursive()
         elif hasattr(event_data, "to_dict"):
@@ -54,20 +54,16 @@ class StripeWebhookService:
             logger.error("[Webhook Error] Event data missing 'id'")
             return False
 
-        # -------------------------------------------------------------
-        # Step 1: Redis 分散式鎖 (Distributed Lock)
-        # -------------------------------------------------------------
+        # Redis Distributed Lock
         lock_key = f"lock:stripe_event:{event_id}"
         acquired_lock = redis_client.set(lock_key, "locked", ex=cls.LOCK_EXPIRE_SECONDS, nx=True)
 
         if not acquired_lock:
             logger.warning(f"[Redis Lock] Event {event_id} is currently being processed by another thread. Skipping.")
-            return True  # 回傳 True 避免 Stripe 無限重試
+            return True  # Return True to acknowledge receipt and prevent Stripe infinite retries
 
         try:
-            # -------------------------------------------------------------
-            # Step 2: DB 冪等性檢查 (Idempotency Check)
-            # -------------------------------------------------------------
+            # Database Idempotency Check
             event_log, created = StripeEventLog.objects.get_or_create(
                 event_id=event_id,
                 defaults={
@@ -81,14 +77,12 @@ class StripeWebhookService:
                 logger.info(f"[Idempotency] Event {event_id} has already been processed previously. Skipping.")
                 return True
 
-            # -------------------------------------------------------------
-            # Step 3: 執行金流業務邏輯
-            # -------------------------------------------------------------
+            # Execute Billing Business Logic
             with transaction.atomic():
                 payload_obj = event_data.get("data", {}).get("object", {})
                 cls._process_event_payload(event_type, payload_obj)
 
-                # 更新 Webhook 日誌狀態為成功
+                # Update webhook log status to PROCESSED
                 event_log.status = StripeEventLog.EventStatus.PROCESSED
                 event_log.processed_at = timezone.now()
                 event_log.save()
@@ -103,14 +97,12 @@ class StripeWebhookService:
             raise e
 
         finally:
-            # 處理完成後釋放 Redis 鎖
+            # Release Redis distributed lock after processing
             redis_client.delete(lock_key)
 
     @classmethod
     def _process_event_payload(cls, event_type: str, payload_obj: dict):
-        # -----------------------------------------------------------------
-        # 事件 1：一次性付款成功 (Checkout Session Completed)
-        # -----------------------------------------------------------------
+        # One-time payment/Checkout completed (checkout.session.completed)
         if event_type == "checkout.session.completed":
             payment_status = payload_obj.get("payment_status")
             if payment_status != "paid":
@@ -140,7 +132,7 @@ class StripeWebhookService:
                 org.stripe_customer_id = customer_id
                 org.save()
 
-            # 相容解析 Stripe SDK 物件與純 Dict 結構中的 Price ID
+            # Parse Price ID compatibly across Stripe SDK objects and pure dict responses
             price_id = None
             try:
                 line_items = stripe.checkout.Session.list_line_items(session_id, limit=1)
@@ -163,7 +155,7 @@ class StripeWebhookService:
                 logger.warning(f"[Webhook Warning] Unmapped or missing price_id '{price_id}'. Defaulting to 'PRO'.")
                 target_plan = "PRO"
 
-            # 同時更新 Organization 與 Subscription
+            # Synchronize Organization plan and Subscription records
             org.plan = target_plan
             org.save()
 
@@ -183,9 +175,7 @@ class StripeWebhookService:
                 f"[Webhook Success] Successfully upgraded Org '{org.name}' ({org.id}) to Plan '{target_plan}'!"
             )
         
-        # -----------------------------------------------------------------
-        # 邊界事件 2：付款失敗 (Payment Intent Failed)
-        # -----------------------------------------------------------------
+        # Payment failed (payment_intent.payment_failed)
         elif event_type == "payment_intent.payment_failed":
             customer_id = payload_obj.get("customer")
             last_payment_error = payload_obj.get("last_payment_error", {}).get("message", "Unknown payment error")
@@ -197,15 +187,13 @@ class StripeWebhookService:
             if customer_id:
                 org = Organization.objects.filter(stripe_customer_id=customer_id).first()
                 if org:
-                    # 可以記錄 Log 或標記訂閱狀態為 past_due / unpaid，但不升級方案
+                    # Update subscription state to unpaid without modifying tier limits
                     subscription, _ = Subscription.objects.get_or_create(organization=org)
                     subscription.status = "unpaid"
                     subscription.save()
                     logger.info(f"[Webhook Border Event] Marked subscription as 'unpaid' for Org {org.name}")
 
-        # -----------------------------------------------------------------
-        # 邊界事件 3：結帳 Session 過期/未完成 (Checkout Session Expired)
-        # -----------------------------------------------------------------
+        # Session expired / abandoned (checkout.session.expired)
         elif event_type == "checkout.session.expired":
             session_id = payload_obj.get("id")
             logger.info(f"[Webhook Border Event] Checkout session {session_id} expired without payment.")

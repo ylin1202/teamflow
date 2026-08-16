@@ -2,7 +2,6 @@ import os
 import json
 import stripe
 import logging
-import redis
 import secrets
 from datetime import timedelta
 
@@ -11,7 +10,6 @@ from django.utils import timezone
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from django.utils.decorators import method_decorator
 
 from rest_framework import viewsets, exceptions, status, permissions
 from rest_framework.views import APIView
@@ -21,8 +19,6 @@ from rest_framework.permissions import IsAuthenticated
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
 
-
-from core.decorators import enforce_quota
 from core.models import (
     OrganizationMember,
     OrganizationInvitation,
@@ -43,87 +39,76 @@ from core.permissions import IsOrganizationMember, IsOrganizationAdmin, IsOrgani
 from core.services.stripe_service import StripeWebhookService
 from core.tasks import send_invitation_email_task
 
-# 定義各方案的專案數量上限
+# Project creation limits per subscription plan
 PLAN_PROJECT_LIMITS = {
     "FREE": 5,
     "PRO": 25,
     "ENTERPRISE": 150,
 }
 
+# Member invitation limits per subscription plan
 PLAN_MEMBER_LIMITS = {
     "FREE": 3,
-    "PRO": None,        # 無限制
-    "ENTERPRISE": None, # 無限制
+    "PRO": None,        # Unlimited
+    "ENTERPRISE": None, # Unlimited
 }
-
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-r = redis.Redis.from_url(REDIS_URL)
 
 stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
 logger = logging.getLogger(__name__)
-
 
 
 @csrf_exempt
 @require_POST
 def stripe_webhook_view(request):
     """
-    Stripe Webhook API Endpoint
-    注意：金流 Webhook 來自第三方伺服器，必須繞過 Django 的 CSRF 檢查，
-    並透過 Stripe Signature Signing Secret 進行安全性驗簽。
+    Stripe Webhook API Endpoint:
+    Exempt from CSRF protection and validates payload authenticity via Stripe signature verification.
     """
-    print("[Webhook] Received a webhook request!")
-
     payload = request.body
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE")
     endpoint_secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", None)
 
-    print(f"DEBUG [Secret in Django]: '{endpoint_secret}'")
-    print(f"DEBUG [Header received ]: {sig_header}")
-
     event = None
 
-    # 1. 簽章驗證 (Signature Verification)
+    # 1. Signature Verification
     try:
         if endpoint_secret:
             event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
         else:
             event = json.loads(payload)
-            print("[Webhook Warning] No STRIPE_WEBHOOK_SECRET found, parsed raw JSON.")
+            logger.warning("[Webhook Warning] No STRIPE_WEBHOOK_SECRET found, parsed raw JSON.")
 
     except ValueError as e:
-        print(f"[Webhook Error] Invalid Payload: {e}")
         logger.error(f"[Webhook Error] Invalid Payload: {e}")
         return HttpResponse(status=400)
 
     except stripe.error.SignatureVerificationError as e:
         if settings.DEBUG:
             event = json.loads(payload)
-            print("[DEBUG Mode] Signature verification failed, fallbacked to raw JSON for local dev.")
+            logger.warning("[DEBUG Mode] Signature verification failed, falling back to raw JSON for local testing.")
         else:
-            print(f"[Webhook Error] Signature Verification Failed: {e}")
             logger.error(f"[Webhook Error] Signature Verification Failed: {e}")
             return HttpResponse(status=400)
 
-    # 2. 呼叫 Service 執行 Redis 鎖 + 冪等性處理
+    # 2. Delegate to Service Layer (Handles Redis distributed locks and DB idempotency)
     try:
         StripeWebhookService.handle_event(event)
-        print("[Webhook Success] Event processed successfully!")
         return JsonResponse({"status": "success"}, status=200)
     except Exception as e:
-        print(f"[Webhook Error] Service Exception: {e}")
         logger.error(f"[Webhook Error] Service Exception: {e}", exc_info=True)
         return JsonResponse({"error": "Internal server error"}, status=500)
 
 
 class CreateCheckoutSessionView(APIView):
+    """
+    Creates a Stripe Checkout Session for upgrading workspace subscription tiers.
+    """
     permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
 
     def post(self, request):
         if not stripe.api_key:
             return Response(
-                {"detail": "Stripe secret key missing"}, 
+                {"detail": "Stripe secret key is not configured."}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -132,7 +117,7 @@ class CreateCheckoutSessionView(APIView):
 
         if not price_id or not org_id:
             return Response(
-                {"detail": "Missing price_id or X-Organization-ID header"}, 
+                {"detail": "Missing price_id or X-Organization-ID header."}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -157,83 +142,66 @@ class CreateCheckoutSessionView(APIView):
 
 class SubscriptionStatusView(APIView):
     """
-    取得當前 Organization 的訂閱狀態與額度資訊
+    Retrieves current workspace subscription status and quota tier metadata.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         org_id = request.headers.get("X-Organization-ID")
         if not org_id:
-            return Response({"detail": "Missing X-Organization-ID"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "Missing X-Organization-ID header."}, status=status.HTTP_400_BAD_REQUEST)
 
-        sub = Subscription.objects.filter(organization_id=org_id).first()
-        if not sub:
-            return Response({
-                "plan": "FREE",
-                "status": "active",
-                "monthly_api_quota": 1000,
-                "cancel_at_period_end": False,
-            })
+        org = Organization.objects.filter(id=org_id).first()
+        if not org:
+            return Response({"detail": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        is_canceling = bool(sub.cancel_at_period_end or sub.status == "canceling")
+        sub = Subscription.objects.filter(organization=org).first()
+        plan = (sub.plan if sub and sub.plan else getattr(org, "plan", "FREE") or "FREE").upper()
+        status_val = sub.status if sub else "active"
 
         return Response({
-            "plan": getattr(sub, 'plan', 'PRO'),
-            "status": "canceling" if is_canceling else sub.status,
-            "monthly_api_quota": sub.monthly_api_quota,
-            "current_period_end": sub.current_period_end,
-            "cancel_at_period_end": is_canceling,
+            "plan": plan,
+            "status": status_val,
+            "max_projects": PLAN_PROJECT_LIMITS.get(plan, 5),
+            "current_period_end": sub.current_period_end if sub else None,
         })
 
 
 class GoogleLoginView(SocialLoginView):
     """
-    接收前端 NextAuth 傳來的 Google Access Token
-    1. 驗證 token 是否合規
-    2. 首次登入自動創建 User 與預設 Organization (觸發 signal)
-    3. 核發 JWT Token 回傳給前端
+    Receives Google Access Token from NextAuth client:
+    1. Validates token authenticity against Google OAuth provider.
+    2. Provisions User and default Organization on initial registration (via signals).
+    3. Issues DRF Auth Token / JWT back to the client.
     """
     adapter_class = GoogleOAuth2Adapter
     
 
 class TenantBaseViewSet(viewsets.ModelViewSet):
     """
-    多租戶模型 ViewSet 基類：
-    1. 自動根據當前 Request 的 Organization ID 過濾 QuerySet (Row-Level 數據隔離)
-    2. 自動在 Create 時將物件與當前 Organization 綁定
-    3. 根據 HTTP Method 動態配對 RBAC 權限
+    Abstract multi-tenant ViewSet base class:
+    1. Enforces row-level tenant isolation by scoping QuerySets to X-Organization-ID.
+    2. Automatically associates newly created instances with the target organization.
+    3. Dynamically maps HTTP methods to RBAC permission classes.
     """
     permission_classes = [IsOrganizationMember]
 
     def get_organization_id(self):
         org_id = self.kwargs.get("org_id") or self.request.headers.get("X-Organization-ID")
         if not org_id:
-            raise exceptions.ValidationError({"detail": "X-Organization-ID header or org_id URL kwarg is required."})
+            raise exceptions.ValidationError({"detail": "X-Organization-ID header or org_id URL parameter is required."})
         return org_id
 
     def get_queryset(self):
-        """
-        核心數據隔離點：覆寫 get_queryset()
-        確保任何 DB 查詢語法背後都強制帶有 organization_id 條件
-        """
         queryset = super().get_queryset()
         org_id = self.get_organization_id()
         return queryset.filter(organization_id=org_id)
 
     def perform_create(self, serializer):
-        """
-        寫入隔離點：建立新資料時，自動寫入對應的 organization_id
-        """
         org_id = self.get_organization_id()
         serializer.save(organization_id=org_id)
 
     def get_permissions(self):
-        """
-        動態權限分配：
-        - 讀取類 (GET, HEAD, OPTIONS) -> 一般 Member 即可
-        - 寫入/更新類 (POST, PUT, PATCH) -> 需要 Admin 權限
-        - 刪除類 (DELETE) -> 需要 Owner 權限
-        """
         if self.action in ["create", "update", "partial_update"]:
             return [IsOrganizationAdmin()]
         elif self.action == "destroy":
@@ -243,7 +211,7 @@ class TenantBaseViewSet(viewsets.ModelViewSet):
 
 class MyOrganizationsView(APIView):
     """
-    取得當前登入使用者所屬的所有 Organization 清單與角色
+    Returns list of workspaces associated with the authenticated user.
     """
     permission_classes = [IsAuthenticated]
 
@@ -267,46 +235,35 @@ class MyOrganizationsView(APIView):
 
 class ProjectViewSet(TenantBaseViewSet):
     """
-    專案 ViewSet：
-    - MEMBER 以上權限：建立 (create)、查看 (list/retrieve)、修改 (update)
-    - ADMIN / OWNER 權限：刪除專案 (destroy)
+    Workspace Project ViewSet:
+    - MEMBER+: List, retrieve, create, and update projects.
+    - ADMIN/OWNER: Delete projects.
     """
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
 
     def get_permissions(self):
-        # 只有刪除專案 (destroy) 需要 ADMIN 或 OWNER 權限
         if self.action == 'destroy':
             return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
-        
-        # MEMBER 即可建立 (create)、讀取 (list/retrieve)、更新 (update)
         return [permissions.IsAuthenticated(), IsOrganizationMember()]
 
     def get_queryset(self):
-        # 按更新時間倒序排序，最新異動排在最前
         return super().get_queryset().order_by('-updated_at')
 
     def create(self, request, *args, **kwargs):
-        # 1. 驗證 Header 中的租戶 ID
         org_id = request.headers.get('X-Organization-ID')
         if not org_id:
-            return Response({'detail': '缺少 X-Organization-ID Header'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Missing X-Organization-ID header.'}, status=status.HTTP_400_BAD_REQUEST)
 
         org = Organization.objects.filter(id=org_id).first()
         if not org:
-            return Response({'detail': 'Organization not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'Organization not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # 2. 取得組織當前的 Plan (優先從 Subscription 拿，沒有則退回 Org.plan)
         sub = Subscription.objects.filter(organization=org).first()
         plan = (sub.plan if sub and sub.plan else getattr(org, "plan", "FREE") or "FREE").upper()
-
-        # 3. 取得該方案的專案配額上限
         max_projects = PLAN_PROJECT_LIMITS.get(plan, 5)
 
-        # 4. 計算當前組織已建立的專案總數
         current_projects = Project.objects.filter(organization=org).count()
-
-        # 5. 爆額攔截
         if current_projects >= max_projects:
             return Response(
                 {
@@ -317,13 +274,12 @@ class ProjectViewSet(TenantBaseViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 未超額則調用父類別方法正常建立專案
         return super().create(request, *args, **kwargs)
     
 
 class OrganizationMemberViewSet(viewsets.ModelViewSet):
     """
-    成員管理 ViewSet
+    Workspace Member Management ViewSet.
     """
     serializer_class = OrganizationMemberSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -342,28 +298,24 @@ class OrganizationMemberViewSet(viewsets.ModelViewSet):
         ).first()
 
         if not current_user_member or current_user_member.role not in ['OWNER', 'ADMIN']:
-            return Response({'detail': '只有 Owner 或 Admin 可以移除成員。'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'detail': 'Only Workspace Owners or Admins can remove members.'}, status=status.HTTP_403_FORBIDDEN)
 
         if member.role == 'OWNER':
-            return Response({'detail': '無法移除 Owner 角色。'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Cannot remove the Workspace Owner.'}, status=status.HTTP_400_BAD_REQUEST)
 
         return super().destroy(request, *args, **kwargs)
 
 
 class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     """
-    邀請碼發送與管理 ViewSet
-    - MEMBER 以上（MEMBER/ADMIN/OWNER）均可查看待接受邀請清單
-    - 僅 ADMIN / OWNER 可以發送新邀請或取消邀請
+    Workspace Email Invitation Management ViewSet.
     """
     serializer_class = OrganizationInvitationSerializer
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
     def get_permissions(self):
-        # 發送邀請 (create)、取消邀請 (destroy) 或修改 (update/partial_update) 需要 ADMIN 以上權限
         if self.action in ['create', 'destroy', 'update', 'partial_update']:
             return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
-        # 查看 Pending 列表 (list, retrieve) 只需要 MEMBER 權限
         return [permissions.IsAuthenticated(), IsOrganizationMember()]
 
     def get_queryset(self):
@@ -375,27 +327,23 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         org_id = self.request.headers.get('X-Organization-ID')
         if not org_id:
-            return Response({'detail': '缺少 X-Organization-ID Header'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Missing X-Organization-ID header.'}, status=status.HTTP_400_BAD_REQUEST)
 
         org = Organization.objects.filter(id=org_id).first()
         if not org:
-            return Response({'detail': 'Organization not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'Organization not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         email = request.data.get('email', '').strip().lower()
         if not email:
-            return Response({'detail': '請提供有效的 Email'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Please provide a valid email address.'}, status=status.HTTP_400_BAD_REQUEST)
 
         role = request.data.get('role', 'MEMBER')
 
-        # 1. 取得組織當前的 Plan (優先看 Subscription，再退回 Org.plan)
         sub = Subscription.objects.filter(organization=org).first()
         plan = (sub.plan if sub and sub.plan else getattr(org, "plan", "FREE") or "FREE").upper()
-
-        # 2. 檢查 Team Member 配額限制
         member_limit = PLAN_MEMBER_LIMITS.get(plan)
         
         if member_limit is not None:
-            # 檢查該 Email 是否已經是待接受邀請 (若已在待邀請清單中，重發不佔用新額度)
             is_already_invited = OrganizationInvitation.objects.filter(
                 organization_id=org_id, 
                 email=email, 
@@ -417,7 +365,6 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-        # 建立或更新邀請紀錄
         invitation, created = OrganizationInvitation.objects.get_or_create(
             organization_id=org_id,
             email=email,
@@ -447,29 +394,28 @@ class OrganizationInvitationViewSet(viewsets.ModelViewSet):
 
 class AcceptInvitationView(APIView):
     """
-    受邀使用者點擊 Email 連結後發送 Token 驗證並完成加入
+    Accepts workspace invitation token sent via email.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         token = request.data.get("token")
         if not token:
-            return Response({"error": "Missing token"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Missing token."}, status=status.HTTP_400_BAD_REQUEST)
 
         invitation = OrganizationInvitation.objects.filter(token=token, is_accepted=False).first()
         if not invitation:
-            return Response({"error": "無效或已被使用的邀請連結。"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Invalid or expired invitation token."}, status=status.HTTP_404_NOT_FOUND)
 
         if invitation.expires_at < timezone.now():
-            return Response({"error": "該邀請連結已過期，請聯繫管理員重新發送。"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "This invitation link has expired. Please ask the administrator to re-send it."}, status=status.HTTP_400_BAD_REQUEST)
 
         user_email = request.user.email.strip().lower()
         invite_email = invitation.email.strip().lower()
 
         if user_email != invite_email:
-            logger.warning(f"[Accept Invite Mismatch] User: '{user_email}' vs Invite: '{invite_email}'")
             return Response(
-                {"error": f"此邀請函專屬 {invitation.email}，目前登入帳號為 {request.user.email}"}, 
+                {"error": f"This invitation was sent to {invitation.email}, but you are logged in as {request.user.email}."}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -486,87 +432,31 @@ class AcceptInvitationView(APIView):
         invitation.save()
 
         return Response({
-            "message": f"成功加入 {invitation.organization.name}！",
+            "message": f"Successfully joined {invitation.organization.name}!",
             "organization_id": str(member.organization.id),
             "organization_name": member.organization.name
-        })
-    
-
-class QuotaUsageView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        # 1. 雙重保險抓取 Organization
-        org = getattr(request, 'organization', None)
-        
-        # 2. 若 Middleware 未注入，從 Header 拿 X-Organization-ID
-        if not org:
-            org_id = request.headers.get("X-Organization-ID")
-            if org_id:
-                # 💡 修復處：先找該使用者是否有這間 Org 的 Member 紀錄
-                member = OrganizationMember.objects.filter(
-                    user=request.user, 
-                    organization_id=org_id
-                ).select_related('organization').first()
-                
-                if member:
-                    org = member.organization
-
-        # 3. 若 Header 也沒帶，預設抓該使用者所屬的第一個 Organization
-        if not org:
-            member = OrganizationMember.objects.filter(
-                user=request.user
-            ).select_related('organization').first()
-            
-            if member:
-                org = member.organization
-
-        # 4. 如果完全找不到任何 Org
-        if not org:
-            return Response(
-                {"error": "No organization found for this user."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # 5. 取得 Subscription 限額上限
-        sub = Subscription.objects.filter(organization=org).first()
-        limit = sub.monthly_api_quota if sub else 1000
-
-        # 6. 讀取 Redis 當月 API 用量
-        current_month = timezone.now().strftime("%Y-%m")
-        redis_key = f"quota:org:{org.id}:{current_month}:used"
-
-        used_val = r.get(redis_key)
-        used = int(used_val.decode('utf-8')) if used_val else 0
-
-        return Response({
-            "used": used,
-            "limit": limit,
-            "remaining": max(0, limit - used),
-            "percentage": round((used / limit) * 100, 2) if limit > 0 else 0.0,
-            "month": current_month,
         })
 
 
 class CustomerPortalView(APIView):
+    """
+    Creates a Stripe Customer Portal session for billing and invoice management.
+    """
     permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
 
     def post(self, request):
         org = getattr(request, "organization", None) or getattr(request.user, "organization", None)
         if not org:
-            return Response({"error": "No organization associated with current user."}, status=400)
+            return Response({"error": "No organization associated with current user."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. 直接從 Organization 取得 stripe_customer_id
         customer_id = getattr(org, "stripe_customer_id", None)
-
         if not customer_id:
             return Response(
                 {"error": "No Stripe Customer ID found. Please complete a payment first."}, 
-                status=400
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         try:
-            # 3. 建立 Stripe Customer Portal Session
             frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
             portal_session = stripe.billing_portal.Session.create(
                 customer=customer_id,
@@ -575,71 +465,18 @@ class CustomerPortalView(APIView):
             return Response({"url": portal_session.url})
         except Exception as e:
             logger.error(f"Failed to create Stripe portal session: {str(e)}")
-            return Response({"error": str(e)}, status=500)
-        
-
-
-class ExecuteCoreTaskView(APIView):
-    """
-    模擬耗用 API 配額的核心業務 API
-    """
-    permission_classes = [IsAuthenticated]
-
-    @method_decorator(enforce_quota)
-    def post(self, request):
-        return Response({
-            "status": "success",
-            "message": "Task executed successfully! 1 API quota consumed."
-        })
-
-
-
-class ReactivateSubscriptionView(APIView):
-    """
-    將即將到期的訂閱恢復為自動續訂
-    """
-    permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
-
-    def post(self, request):
-        org_id = request.headers.get("X-Organization-ID")
-        if not org_id:
-            return Response({"error": "Missing X-Organization-ID header."}, status=status.HTTP_400_BAD_REQUEST)
-
-        sub = Subscription.objects.filter(organization_id=org_id).first()
-        if not sub or not sub.stripe_subscription_id:
-            return Response({"error": "No subscription found to reactivate."}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            # 呼叫 Stripe API 關閉取消預定
-            stripe.Subscription.modify(
-                sub.stripe_subscription_id,
-                cancel_at_period_end=False
-            )
-            sub.cancel_at_period_end = False
-            sub.status = "active"
-            sub.save()
-
-            return Response({
-                "message": "Subscription reactivated successfully!",
-                "status": "active"
-            })
-        except Exception as e:
-            logger.error(f"Failed to reactivate subscription: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class TaskViewSet(TenantBaseViewSet):
     """
-    看板任務 ViewSet
+    Kanban Task ViewSet scoped to Organization and Project.
     """
     queryset = Task.objects.all()
     serializer_class = TaskSerializer
-    
-    # 允許所有團隊成員（MEMBER / ADMIN / OWNER）檢視、新增與更新狀態 (包含拖曳移動)
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
     def get_permissions(self):
-        # 僅刪除動作需要 ADMIN 以上權限
         if self.action == 'destroy':
             return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
         return [permissions.IsAuthenticated(), IsOrganizationMember()]
@@ -654,16 +491,13 @@ class TaskViewSet(TenantBaseViewSet):
 
 class DocumentViewSet(TenantBaseViewSet):
     """
-    專案 Markdown 文件 ViewSet
+    Project Documentation ViewSet for Markdown specs.
     """
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer 
-    
-    # 允許所有團隊成員（MEMBER / ADMIN / OWNER）閱讀與編輯文件內文
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
     def get_permissions(self):
-        # 僅刪除動作需要 ADMIN 以上權限
         if self.action == 'destroy':
             return [permissions.IsAuthenticated(), IsOrganizationAdmin()]
         return [permissions.IsAuthenticated(), IsOrganizationMember()]
@@ -684,7 +518,7 @@ class DocumentViewSet(TenantBaseViewSet):
 
 class ProjectQuotaUsageView(APIView):
     """
-    取得當前 Organization 的 Project 建立數量與方案上限配額
+    Returns current project creation count and maximum allowed quota for the workspace.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -692,14 +526,14 @@ class ProjectQuotaUsageView(APIView):
         org_id = request.headers.get("X-Organization-ID")
         if not org_id:
             return Response(
-                {"detail": "Missing X-Organization-ID header"}, 
+                {"detail": "Missing X-Organization-ID header."}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         org = Organization.objects.filter(id=org_id).first()
         if not org:
             return Response(
-                {"detail": "Organization not found"}, 
+                {"detail": "Organization not found."}, 
                 status=status.HTTP_404_NOT_FOUND
             )
 

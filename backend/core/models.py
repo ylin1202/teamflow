@@ -10,21 +10,19 @@ from django.utils.translation import gettext_lazy as _
 from django.core.serializers.json import DjangoJSONEncoder
 
 
-# 定義 UUIDv7 產生器函數，供 Django ORM default 呼叫
+# UUIDv7 generator callable for Django ORM field defaults
 def generate_uuidv7():
     return uuid6.uuid7()
 
 def get_default_invitation_expiration():
     return timezone.now() + timedelta(days=7)
 
-# ==========================================
-# 1. 核心抽象模型 (Base Model)
-# ==========================================
+# Abstract Base Model
 class BaseModel(models.Model):
     """
-    所有模型的抽象基類：
-    1. 使用 UUIDv7 作為 Primary Key（時間排序 + 不可枚舉）
-    2. 自動紀錄建立與更新時間
+    Abstract base class for models:
+    1. Uses UUIDv7 as Primary Key (time-ordered + non-enumerable)
+    2. Automatically tracks creation and update timestamps
     """
     id = models.UUIDField(
         primary_key=True, 
@@ -33,18 +31,16 @@ class BaseModel(models.Model):
         help_text="UUIDv7 (Time-ordered Universally Unique Identifier)"
     )
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    updated_at = models.DateTimeField(auto_now=True)  # 統一由 BaseModel 提供更新時間
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         abstract = True
 
 
-# ==========================================
-# 2. 客製化 User 模型
-# ==========================================
+# Custom User Model
 class User(AbstractUser):
     """
-    客製化 User 模型，主鍵繼承使用 UUIDv7
+    Custom User model utilizing UUIDv7 primary keys.
     """
     id = models.UUIDField(
         primary_key=True, 
@@ -53,7 +49,6 @@ class User(AbstractUser):
     )
     email = models.EmailField(_("email address"), unique=True)
     
-    # 補上建立與更新時間戳記
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -67,26 +62,21 @@ class User(AbstractUser):
         return self.email
 
 
-# ==========================================
-# 3. 組織/團隊模型 (Organization - Multi-Tenancy 核心)
-# ==========================================
+# Organization / Workspace Model
 class Organization(BaseModel):
-    """
-    多租戶 (Tenant) 核心。商業資料完全以此作為隔離邊界。
-    """
     name = models.CharField(max_length=100)
-    slug = models.SlugField(max_length=100, unique=True, help_text="團隊專屬 URL 縮寫")
+    slug = models.SlugField(max_length=100, unique=True, help_text="Workspace URL slug")
     
-    # Stripe Customer ID 綁定在組織（租戶）層級
+    # Stripe Customer ID scoped to the Organization level
     stripe_customer_id = models.CharField(
         max_length=255, unique=True, null=True, blank=True, db_index=True
     )
 
-    # 增加 plan 欄位方便 API 直接讀取，預設為 FREE
+    # Cached plan identifier for quick API retrieval (default: FREE)
     plan = models.CharField(
         max_length=20,
         default="FREE",
-        help_text="當前方案: FREE (5), PRO (30), ENTERPRISE (100)"
+        help_text="Current plan: FREE (5), PRO (25), ENTERPRISE (150)"
     )
     
     owner = models.ForeignKey(
@@ -103,9 +93,7 @@ class Organization(BaseModel):
         return f"{self.name} [{self.plan}]"
 
 
-# ==========================================
-# 4. 組織成員與 RBAC 權限模型
-# ==========================================
+# Organization RBAC Roles and Membership
 class OrganizationRole(models.TextChoices):
     OWNER = "OWNER", _("Owner")
     ADMIN = "ADMIN", _("Admin")
@@ -114,8 +102,7 @@ class OrganizationRole(models.TextChoices):
 
 class OrganizationMember(BaseModel):
     """
-    User 與 Organization 的多對多中間表，實作 RBAC 權限控管
-    (繼承 BaseModel 即可擁有 created_at 作為加入時間)
+    Many-to-many intermediate model between User and Organization for RBAC.
     """
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -133,9 +120,7 @@ class OrganizationMember(BaseModel):
         return f"{self.user.email} - {self.organization.name} ({self.role})"
 
 
-# ==========================================
-# 5. 訂閱與專案額度模型 (Subscription)
-# ==========================================
+# Subscription Status Choices
 class SubscriptionStatus(models.TextChoices):
     ACTIVE = "active", _("Active")
     PAST_DUE = "past_due", _("Past Due")
@@ -144,21 +129,23 @@ class SubscriptionStatus(models.TextChoices):
     INCOMPLETE = "incomplete", _("Incomplete")
 
 
+# Subscription Plan Tier Choices
 class SubscriptionPlan(models.TextChoices):
     FREE = "FREE", _("Free Tier")
     PRO = "PRO", _("Pro Plan")
     ENTERPRISE = "ENTERPRISE", _("Enterprise")
 
 
+# Organization Subscription & Quotas
 class Subscription(BaseModel):
     """
-    紀錄組織的 Stripe 購買紀錄與 Project 配額 (Quota)
+    Tracks Stripe subscription metadata and project quota limits per organization.
     """
     organization = models.OneToOneField(
         Organization, on_delete=models.CASCADE, related_name="subscription"
     )
     
-    # Stripe 相關識別碼 (初始化或未付費前允許 null)
+    # Stripe billing identifiers
     stripe_subscription_id = models.CharField(
         max_length=255, unique=True, null=True, blank=True, db_index=True
     )
@@ -167,7 +154,7 @@ class Subscription(BaseModel):
     )
     stripe_price_id = models.CharField(max_length=255, null=True, blank=True)
     
-    # 方案與狀態
+    # Tier and Lifecycle Status
     plan = models.CharField(
         max_length=20,
         choices=SubscriptionPlan.choices,
@@ -179,13 +166,11 @@ class Subscription(BaseModel):
         default=SubscriptionStatus.ACTIVE
     )
     
-    # 專案配額上限 (Free: 5, Pro: 30, Enterprise: 100)
-    max_projects = models.IntegerField(default=5, help_text="該方案允許的最大專案建立數量")
-    monthly_api_quota = models.IntegerField(default=1000, help_text="當月可用 API 配額")
+    # Quota Limits (Free: 5, Pro: 25, Enterprise: 150)
+    max_projects = models.IntegerField(default=5, help_text="Maximum allowed projects for this plan")
     
     current_period_start = models.DateTimeField(null=True, blank=True)
     current_period_end = models.DateTimeField(null=True, blank=True)
-    cancel_at_period_end = models.BooleanField(default=False)
 
     class Meta:
         db_table = "saas_subscription"
@@ -194,12 +179,10 @@ class Subscription(BaseModel):
         return f"{self.organization.name} - {self.plan} ({self.status})"
     
 
-# ==========================================
-# 6. Stripe Webhook 審計與冪等日誌 (Stripe Event Log)
-# ==========================================
+# Stripe Webhook Audit & Idempotency Log
 class StripeEventLog(BaseModel):
     """
-    用於防範 Webhook 重複打入 (Idempotency) 與金流事件審計 (Audit Log)
+    Ensures webhook idempotency and maintains an audit log for billing events.
     """
     class EventStatus(models.TextChoices):
         PENDING = "pending", _("Pending")
@@ -207,7 +190,7 @@ class StripeEventLog(BaseModel):
         FAILED = "failed", _("Failed")
 
     event_id = models.CharField(max_length=255, unique=True, db_index=True)
-    type = models.CharField(max_length=255, help_text="事件類型，如 checkout.session.completed")
+    type = models.CharField(max_length=255, help_text="Stripe event type, e.g., checkout.session.completed")
     
     status = models.CharField(
         max_length=20, 
@@ -227,12 +210,10 @@ class StripeEventLog(BaseModel):
         return f"{self.event_id} - {self.type} ({self.status})"
     
 
-# ==========================================
-# 7. 專案/業務模型
-# ==========================================
+# Workspace Project Model
 class Project(BaseModel):
     """
-    專案模型：綁定 Organization，自動繼承 BaseModel 的 created_at 與 updated_at
+    Project model scoped to an Organization.
     """
     organization = models.ForeignKey(
         Organization, 
@@ -249,12 +230,10 @@ class Project(BaseModel):
         return f"{self.name} ({self.organization.name})"
     
     
-# ==========================================
-# 8. 組織邀請模型 (Organization Invitation)
-# ==========================================
+# Organization Member Invitation Model
 class OrganizationInvitation(BaseModel):
     """
-    紀錄受邀加入 Working Space 的 Email 邀請紀錄
+    Tracks pending email invitations to join a workspace.
     """
     organization = models.ForeignKey(
         Organization, 
@@ -279,12 +258,12 @@ class OrganizationInvitation(BaseModel):
         unique=True, 
         null=True, 
         blank=True,
-        help_text="專屬邀請 Token"
+        help_text="Unique invitation token"
     )
     
     expires_at = models.DateTimeField(
         default=get_default_invitation_expiration,
-        help_text="邀請連結過期時間 (預設 7 天)"
+        help_text="Expiration timestamp for the invitation link (defaults to 7 days)"
     )
 
     class Meta:
@@ -300,9 +279,7 @@ class OrganizationInvitation(BaseModel):
         return f"Invite {self.email} to {self.organization.name} as {self.role}"
     
     
-# ==========================================
-# 9. 看板任務模型 (Task)
-# ==========================================
+# Kanban Task Model
 class TaskStatus(models.TextChoices):
     TODO = "todo", _("To Do")
     IN_PROGRESS = "in_progress", _("In Progress")
@@ -311,7 +288,7 @@ class TaskStatus(models.TextChoices):
 
 class Task(BaseModel):
     """
-    專案內部的看板 Task：綁定 Project 與 Organization (Row-Level 雙重隔離)
+    Kanban task model scoped to both Project and Organization.
     """
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="tasks"
@@ -337,12 +314,10 @@ class Task(BaseModel):
         return f"{self.title} [{self.status}]"
 
 
-# ==========================================
-# 10. 專案 Markdown 文件與規格書模型 (Document)
-# ==========================================
+# Markdown Specification & Documentation Model
 class Document(BaseModel):
     """
-    專案層級的 Markdown 文件與規格書 (支援雙欄編輯與 SSE 即時 AI 產生)
+    Project-level Markdown documentation and specification sheets.
     """
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="documents"
@@ -351,7 +326,7 @@ class Document(BaseModel):
         Project, on_delete=models.CASCADE, related_name="documents"
     )
     title = models.CharField(max_length=255)
-    content = models.TextField(blank=True, default="", help_text="Markdown 原始內文")
+    content = models.TextField(blank=True, default="", help_text="Raw Markdown content")
     created_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_documents"
     )
@@ -361,5 +336,3 @@ class Document(BaseModel):
 
     def __str__(self):
         return f"{self.title} ({self.project.name})"
-    
-
