@@ -24,7 +24,7 @@ export default function DashboardPage() {
   const { currentOrg } = useOrgStore();
 
   const [projects, setProjects] = useState<Project[]>([]);
-  const [usage, setUsage] = useState<OrgProjectUsage | null>(null); // 新增 Usage State
+  const [usage, setUsage] = useState<OrgProjectUsage | null>(null);
   const [projectName, setProjectName] = useState("");
   const [projectDesc, setProjectDesc] = useState("");
   const [isFetching, setIsFetching] = useState(false);
@@ -149,25 +149,24 @@ export default function DashboardPage() {
       {/* 租戶詳細資訊小卡 */}
       {currentOrg && (
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-2">
-          <h2 className="text-sm font-semibold text-gray-700">Active Tenant Metadata</h2>
+          <h2 className="text-sm font-semibold text-gray-700">Current Workspace</h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 font-mono text-xs">
             <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-              <span className="text-gray-400 block mb-1">Org Name</span>
+              <span className="text-gray-400 block mb-1">Workspace Name</span>
               <span className="font-semibold text-gray-800">{currentOrg.name}</span>
             </div>
             <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-              <span className="text-gray-400 block mb-1">Role</span>
+              <span className="text-gray-400 block mb-1">Your Role</span>
               <span className="font-semibold text-blue-600">{currentOrg.role}</span>
             </div>
             <div className="bg-gray-50 p-3 rounded-lg border border-gray-100 col-span-2">
-              <span className="text-gray-400 block mb-1">UUIDv7</span>
+              <span className="text-gray-400 block mb-1">Workspace ID</span>
               <span className="font-semibold text-gray-700 truncate block">{currentOrg.id}</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 💡 爆額警告 Banner */}
       {isLimitReached && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-800">
           <div className="text-xs">
@@ -252,7 +251,8 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <span className="font-mono text-[11px] text-gray-400 bg-gray-100 px-2 py-1 rounded hidden sm:inline-block">
+                    <span className="font-mono text-[11px] text-gray-500 bg-gray-50 px-2 py-1 rounded border border-gray-200 hidden sm:inline-block">
+                      <span className="text-gray-400 mr-1 font-sans font-medium">Project ID:</span>
                       {project.id}
                     </span>
 
@@ -299,7 +299,7 @@ export default function DashboardPage() {
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
                   required
                 />
               </div>
@@ -312,7 +312,7 @@ export default function DashboardPage() {
                   value={editDesc}
                   onChange={(e) => setEditDesc(e.target.value)}
                   rows={3}
-                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  className="w-full rounded-lg border border-gray-300 px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-gray-900"
                 />
               </div>
 
