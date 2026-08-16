@@ -21,10 +21,10 @@ import {
   Eye,
 } from "lucide-react";
 
-// 動態引入 ReactMarkdown 避免 SSR / ESM 型別衝突
+// Dynamically import ReactMarkdown to avoid SSR and ESM type conflicts
 const ReactMarkdown = dynamic(() => import("react-markdown"), { ssr: false });
 
-// 自訂 Markdown 渲染元件：精確區分 pre（多行代碼塊）與 code（行內代碼標籤）
+// Custom Markdown renderer components: cleanly distinguish between multi-line code blocks (<pre>) and inline code tags (<code>)
 const markdownComponents = {
   h1: ({ ...props }: any) => (
     <h1 className="text-xl font-bold text-gray-900 border-b border-gray-200 pb-2 mt-5 mb-3 tracking-tight" {...props} />
@@ -46,12 +46,12 @@ const markdownComponents = {
   ),
   li: ({ ...props }: any) => <li className="leading-relaxed text-gray-700" {...props} />,
 
-  // 多行程式碼區塊容器
+  // Multi-line code block container
   pre: ({ ...props }: any) => (
     <pre className="bg-gray-900 text-gray-100 p-4 rounded-xl overflow-x-auto text-xs font-mono my-3 shadow-inner" {...props} />
   ),
 
-  // 行內代碼標籤 vs 多行代碼內部標籤判斷
+  // Distinguish between inline code tag vs. block code element
   code: ({ className, children, ...props }: any) => {
     const isCodeBlock =
       /language-(\w+)/.test(className || "") ||
@@ -114,13 +114,13 @@ export default function ProjectDetailPage() {
   const { currentOrg } = useOrgStore();
   const projectId = params.id as string;
 
-  // 只有 OWNER 或 ADMIN 才能看到並執行刪除 (MEMBER 會自動隱藏刪除按鈕)
+  // Only OWNER or ADMIN roles can view and execute deletions (automatically hidden for MEMBER roles)
   const canDelete = currentOrg?.role === "OWNER" || currentOrg?.role === "ADMIN";
 
-  // Tab 狀態
+  // Tab State
   const [activeTab, setActiveTab] = useState<"kanban" | "docs">("kanban");
 
-  // Tasks 狀態
+  // Tasks State
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDesc, setTaskDesc] = useState("");
@@ -128,7 +128,7 @@ export default function ProjectDetailPage() {
   const [isTaskLoading, setIsTaskLoading] = useState(false);
   const [descTab, setDescTab] = useState<"edit" | "preview">("edit");
 
-  // Task 編輯 Modal 狀態
+  // Task Edit Modal State
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [editTaskTitle, setEditTaskTitle] = useState("");
   const [editTaskDesc, setEditTaskDesc] = useState("");
@@ -136,7 +136,7 @@ export default function ProjectDetailPage() {
   const [editTaskDescTab, setEditTaskDescTab] = useState<"edit" | "preview">("edit");
   const [isUpdatingTask, setIsUpdatingTask] = useState(false);
 
-  // Docs 狀態
+  // Docs State
   const [docs, setDocs] = useState<Document[]>([]);
   const [docTitle, setDocTitle] = useState("");
   const [docContent, setDocContent] = useState("");
@@ -144,21 +144,21 @@ export default function ProjectDetailPage() {
   const [isDocLoading, setIsDocLoading] = useState(false);
   const [addDocTab, setAddDocTab] = useState<"edit" | "preview">("edit");
 
-  // Doc 編輯狀態
+  // Doc Edit State
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editDocTitle, setEditDocTitle] = useState("");
   const [editDocContent, setEditDocContent] = useState("");
   const [isEditDocLoading, setIsEditDocLoading] = useState(false);
   const [editDocTab, setEditDocTab] = useState<"edit" | "preview">("edit");
 
-  // API 呼叫函式
+  // API Call Functions
   const fetchTasks = useCallback(async () => {
     if (!projectId || !currentOrg) return;
     try {
       const res = await api.get<Task[]>(`/api/tasks/?project_id=${projectId}`);
       setTasks(res.data);
     } catch (err) {
-      console.error("無法取得 Task 列表", err);
+      console.error("Failed to fetch task list", err);
     }
   }, [projectId, currentOrg]);
 
@@ -168,7 +168,7 @@ export default function ProjectDetailPage() {
       const res = await api.get<Document[]>(`/api/documents/?project_id=${projectId}`);
       setDocs(res.data);
     } catch (err) {
-      console.error("無法取得 Document 列表", err);
+      console.error("Failed to fetch document list", err);
     }
   }, [projectId, currentOrg]);
 
@@ -179,7 +179,7 @@ export default function ProjectDetailPage() {
     }
   }, [currentOrg, projectId, fetchTasks, fetchDocs]);
 
-  // Task 操作
+  // Task Operations
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskTitle.trim()) return;
@@ -196,13 +196,13 @@ export default function ProjectDetailPage() {
       setIsAddingTask(false);
       fetchTasks();
     } catch (err) {
-      console.error("建立 Task 失敗", err);
+      console.error("Failed to create task", err);
     } finally {
       setIsTaskLoading(false);
     }
   };
 
-  // 開啟 Task 編輯 Modal
+  // Open Task Edit Modal
   const handleStartEditTask = (task: Task) => {
     setEditingTask(task);
     setEditTaskTitle(task.title);
@@ -211,7 +211,7 @@ export default function ProjectDetailPage() {
     setEditTaskDescTab("edit");
   };
 
-  // 送出 Task 編輯
+  // Submit Task Edit
   const handleUpdateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTask || !editTaskTitle.trim()) return;
@@ -225,35 +225,35 @@ export default function ProjectDetailPage() {
       setEditingTask(null);
       fetchTasks();
     } catch (err) {
-      console.error("更新 Task 失敗", err);
-      alert("更新 Task 失敗");
+      console.error("Failed to update task", err);
+      alert("Failed to update task");
     } finally {
       setIsUpdatingTask(false);
     }
   };
 
-  // 更新 Task 狀態 (按鈕快速切換)
+  // Update Task Status (Quick status transition button)
   const handleUpdateTaskStatus = async (taskId: string, newStatus: Task["status"]) => {
     try {
       await api.patch(`/api/tasks/${taskId}/`, { status: newStatus });
       fetchTasks();
     } catch (err) {
-      console.error("更新 Task 狀態失敗", err);
+      console.error("Failed to update task status", err);
     }
   };
 
-  // 刪除 Task
+  // Delete Task
   const handleDeleteTask = async (taskId: string) => {
-    if (!confirm("確定要刪除這張 Task 嗎？")) return;
+    if (!confirm("Are you sure you want to delete this task?")) return;
     try {
       await api.delete(`/api/tasks/${taskId}/`);
       fetchTasks();
     } catch (err) {
-      console.error("刪除 Task 失敗", err);
+      console.error("Failed to delete task", err);
     }
   };
 
-  // Doc 操作
+  // Doc Operations
   const handleCreateDoc = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!docTitle.trim()) return;
@@ -270,13 +270,13 @@ export default function ProjectDetailPage() {
       setAddDocTab("edit");
       fetchDocs();
     } catch (err) {
-      console.error("建立文件失敗", err);
+      console.error("Failed to create document", err);
     } finally {
       setIsDocLoading(false);
     }
   };
 
-  // 開始編輯 Doc
+  // Start Editing Doc
   const handleStartEditDoc = (doc: Document) => {
     setEditingDocId(doc.id);
     setEditDocTitle(doc.title);
@@ -284,7 +284,7 @@ export default function ProjectDetailPage() {
     setEditDocTab("edit");
   };
 
-  // 取消編輯 Doc
+  // Cancel Editing Doc
   const handleCancelEditDoc = () => {
     setEditingDocId(null);
     setEditDocTitle("");
@@ -292,7 +292,7 @@ export default function ProjectDetailPage() {
     setEditDocTab("edit");
   };
 
-  // 送出編輯 Doc
+  // Submit Edited Doc
   const handleUpdateDoc = async (e: React.FormEvent, docId: string) => {
     e.preventDefault();
     if (!editDocTitle.trim()) return;
@@ -305,24 +305,24 @@ export default function ProjectDetailPage() {
       setEditingDocId(null);
       fetchDocs();
     } catch (err) {
-      console.error("更新文件失敗", err);
+      console.error("Failed to update document", err);
     } finally {
       setIsEditDocLoading(false);
     }
   };
 
-  // 刪除 Doc
+  // Delete Doc
   const handleDeleteDoc = async (docId: string) => {
-    if (!confirm("確定要刪除這份 Spec 文件嗎？")) return;
+    if (!confirm("Are you sure you want to delete this spec document?")) return;
     try {
       await api.delete(`/api/documents/${docId}/`);
       fetchDocs();
     } catch (err) {
-      console.error("刪除文件失敗", err);
+      console.error("Failed to delete document", err);
     }
   };
 
-  // Kanban 卡片通用渲染
+  // Generic Kanban Card Renderer
   const renderTaskCard = (t: Task) => (
     <div
       key={t.id}
@@ -350,14 +350,14 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* 緊湊型 Markdown 容器 */}
+      {/* Compact Markdown container */}
       {t.description && (
         <div className="text-xs text-gray-700 bg-gray-50/80 p-2.5 rounded-lg border border-gray-100 max-h-56 overflow-y-auto">
           <ReactMarkdown components={markdownComponents}>{t.description}</ReactMarkdown>
         </div>
       )}
 
-      {/* 底部按鈕列：微調 pt-1.5 讓上下視覺對稱 */}
+      {/* Footer action buttons: fine-tuned pt-1.5 for vertical balance */}
       <div className="pt-1.5 border-t border-gray-100 flex justify-between items-center text-xs">
         {t.status === "todo" && (
           <div className="ml-auto">
@@ -401,7 +401,7 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* 頂部 Header & 導覽 */}
+      {/* Top Header & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-5">
         <div className="flex items-center gap-3">
           <button
@@ -417,23 +417,25 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        {/* Tab 切換按鈕 */}
+        {/* Tab Toggle Buttons */}
         <div className="flex bg-gray-100 p-1 rounded-xl w-fit">
           <button
             onClick={() => setActiveTab("kanban")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition ${activeTab === "kanban"
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition ${
+              activeTab === "kanban"
                 ? "bg-white text-blue-600 shadow-sm"
                 : "text-gray-500 hover:text-gray-800"
-              }`}
+            }`}
           >
             <Kanban className="w-4 h-4" /> Task Board
           </button>
           <button
             onClick={() => setActiveTab("docs")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition ${activeTab === "docs"
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition ${
+              activeTab === "docs"
                 ? "bg-white text-blue-600 shadow-sm"
                 : "text-gray-500 hover:text-gray-800"
-              }`}
+            }`}
           >
             <FileCode2 className="w-4 h-4" /> Markdown Specs
           </button>
@@ -453,7 +455,7 @@ export default function ProjectDetailPage() {
             </button>
           </div>
 
-          {/* 新增 Task 表單 */}
+          {/* Create Task Form */}
           {isAddingTask && (
             <form onSubmit={handleCreateTask} className="bg-white p-5 border border-gray-200 rounded-xl shadow-sm space-y-4 max-w-2xl">
               <h3 className="font-semibold text-sm text-gray-800">Create New Task</h3>
@@ -518,7 +520,7 @@ export default function ProjectDetailPage() {
             </form>
           )}
 
-          {/* Kanban 看板 3 欄 */}
+          {/* Kanban 3-Column Board */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* To Do */}
             <div className="bg-gray-50 p-4 rounded-xl space-y-3 border border-gray-200">
@@ -556,7 +558,7 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {/* Task 編輯 Modal */}
+      {/* Task Edit Modal */}
       {editingTask && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl border border-gray-200 max-w-lg w-full p-6 space-y-4">
@@ -601,16 +603,18 @@ export default function ProjectDetailPage() {
                     <button
                       type="button"
                       onClick={() => setEditTaskDescTab("edit")}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${editTaskDescTab === "edit" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
-                        }`}
+                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${
+                        editTaskDescTab === "edit" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
+                      }`}
                     >
                       <Edit2 className="w-3 h-3" /> Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => setEditTaskDescTab("preview")}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${editTaskDescTab === "preview" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
-                        }`}
+                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${
+                        editTaskDescTab === "preview" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
+                      }`}
                     >
                       <Eye className="w-3 h-3" /> Preview
                     </button>
@@ -669,7 +673,7 @@ export default function ProjectDetailPage() {
             </button>
           </div>
 
-          {/* 新增 Document 表單 */}
+          {/* Create Document Form */}
           {isAddingDoc && (
             <form onSubmit={handleCreateDoc} className="bg-white p-5 border border-gray-200 rounded-xl shadow-sm space-y-4">
               <h3 className="font-semibold text-sm text-gray-800">Create New Spec / Document</h3>
@@ -691,16 +695,18 @@ export default function ProjectDetailPage() {
                     <button
                       type="button"
                       onClick={() => setAddDocTab("edit")}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${addDocTab === "edit" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
-                        }`}
+                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${
+                        addDocTab === "edit" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
+                      }`}
                     >
                       <Edit2 className="w-3 h-3" /> Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => setAddDocTab("preview")}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${addDocTab === "preview" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
-                        }`}
+                      className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${
+                        addDocTab === "preview" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
+                      }`}
                     >
                       <Eye className="w-3 h-3" /> Preview
                     </button>
@@ -744,7 +750,7 @@ export default function ProjectDetailPage() {
             </form>
           )}
 
-          {/* Document 清單 */}
+          {/* Document List */}
           {docs.length === 0 ? (
             <div className="bg-white border border-gray-200 rounded-xl p-10 text-center text-gray-400 text-sm">
               No spec documents written for this project yet.
@@ -792,16 +798,18 @@ export default function ProjectDetailPage() {
                             <button
                               type="button"
                               onClick={() => setEditDocTab("edit")}
-                              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${editDocTab === "edit" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
-                                }`}
+                              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${
+                                editDocTab === "edit" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
+                              }`}
                             >
                               <Edit2 className="w-3 h-3" /> Edit
                             </button>
                             <button
                               type="button"
                               onClick={() => setEditDocTab("preview")}
-                              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${editDocTab === "preview" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
-                                }`}
+                              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition ${
+                                editDocTab === "preview" ? "bg-white font-semibold text-gray-800 shadow-sm" : "text-gray-500 hover:text-gray-800"
+                              }`}
                             >
                               <Eye className="w-3 h-3" /> Preview
                             </button>
@@ -827,7 +835,7 @@ export default function ProjectDetailPage() {
                     </form>
                   ) : (
                     <div>
-                      {/* 文件頂部 Header */}
+                      {/* Document Top Header */}
                       <div className="border-b border-gray-100 pb-4 flex justify-between items-start">
                         <div>
                           <h3 className="font-bold text-gray-900 text-xl tracking-tight">{doc.title}</h3>
@@ -843,7 +851,7 @@ export default function ProjectDetailPage() {
                             <Edit2 className="w-3.5 h-3.5" /> Edit
                           </button>
 
-                          {/* 刪除 Document 按鈕：僅 OWNER 與 ADMIN 顯示 */}
+                          {/* Delete Document Button: Only visible to OWNER and ADMIN */}
                           {canDelete && (
                             <button
                               onClick={() => handleDeleteDoc(doc.id)}
@@ -856,7 +864,7 @@ export default function ProjectDetailPage() {
                         </div>
                       </div>
 
-                      {/* 文件 Markdown 內容渲染區 */}
+                      {/* Document Markdown Content Rendering Area */}
                       <div className="pt-4 text-gray-800 text-sm leading-relaxed">
                         <ReactMarkdown components={markdownComponents}>
                           {doc.content || "*No content provided.*"}

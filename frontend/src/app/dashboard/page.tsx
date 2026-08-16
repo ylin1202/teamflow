@@ -30,16 +30,16 @@ export default function DashboardPage() {
   const [isFetching, setIsFetching] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  // 編輯 Modal 相關 State
+  // Edit Modal state
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // 只有 OWNER 或 ADMIN 才能刪除專案 (MEMBER 不能刪除)
+  // Only OWNER or ADMIN can delete projects (MEMBER cannot delete)
   const canDelete = currentOrg?.role === "OWNER" || currentOrg?.role === "ADMIN";
 
-  // 同時獲取專案清單與用量配額 API
+  // Fetch project list and usage quota concurrently
   const fetchData = useCallback(async () => {
     if (!currentOrg) return;
     setIsFetching(true);
@@ -48,13 +48,13 @@ export default function DashboardPage() {
         api.get<Project[]>("/api/projects/"),
         api.get<OrgProjectUsage>("/api/billing/project-usage/", {
           headers: { "X-Organization-ID": currentOrg.id },
-        }).catch(() => null), // 降級處理
+        }).catch(() => null), // Graceful degradation fallback
       ]);
 
       setProjects(projectsRes.data);
       if (usageRes) setUsage(usageRes.data);
     } catch (err) {
-      console.error("無法取得 Dashboard 資料", err);
+      console.error("Failed to fetch dashboard data", err);
     } finally {
       setIsFetching(false);
     }
@@ -66,10 +66,10 @@ export default function DashboardPage() {
     }
   }, [currentOrg, fetchData]);
 
-  // 判斷專案是否已達上限
+  // Determine if project limit has been reached
   const isLimitReached = usage ? usage.current_projects >= usage.max_projects : false;
 
-  // 建立專案
+  // Create Project
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectName.trim() || isLimitReached) return;
@@ -84,23 +84,23 @@ export default function DashboardPage() {
       setProjectDesc("");
       fetchData();
     } catch (err: any) {
-      console.error("建立專案失敗", err);
-      const msg = err.response?.data?.detail || "建立專案失敗";
+      console.error("Failed to create project", err);
+      const msg = err.response?.data?.detail || "Failed to create project";
       alert(msg);
     } finally {
       setIsCreating(false);
     }
   };
 
-  // 開啟編輯 Modal
+  // Open Edit Modal
   const handleOpenEdit = (project: Project, e: React.MouseEvent) => {
-    e.stopPropagation(); // 阻止觸發卡片跳轉
+    e.stopPropagation(); // Prevent card navigation trigger
     setEditingProject(project);
     setEditName(project.name);
     setEditDesc(project.description || "");
   };
 
-  // 送出編輯
+  // Submit Edit
   const handleUpdateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProject || !editName.trim()) return;
@@ -114,31 +114,31 @@ export default function DashboardPage() {
       setEditingProject(null);
       fetchData();
     } catch (err) {
-      console.error("更新專案失敗", err);
-      alert("更新專案失敗");
+      console.error("Failed to update project", err);
+      alert("Failed to update project");
     } finally {
       setIsUpdating(false);
     }
   };
 
-  // 刪除專案 (僅 OWNER / ADMIN 可執行)
+  // Delete Project (Only OWNER / ADMIN can execute)
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // 阻止觸發卡片跳轉
-    if (!window.confirm("確定要刪除此專案嗎？相關資料將無法復原。")) return;
+    e.stopPropagation(); // Prevent card navigation trigger
+    if (!window.confirm("Are you sure you want to delete this project? Associated data cannot be recovered.")) return;
 
     try {
       await api.delete(`/api/projects/${projectId}/`);
       fetchData();
     } catch (err: any) {
-      console.error("刪除專案失敗", err);
-      const msg = err.response?.data?.detail || "刪除專案失敗，僅 Admin/Owner 可刪除專案。";
+      console.error("Failed to delete project", err);
+      const msg = err.response?.data?.detail || "Failed to delete project. Only Admin/Owner can delete projects.";
       alert(msg);
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* 頁面標題 */}
+      {/* Page Title */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-sm text-gray-500">
@@ -146,7 +146,7 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* 租戶詳細資訊小卡 */}
+      {/* Tenant Details Card */}
       {currentOrg && (
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-2">
           <h2 className="text-sm font-semibold text-gray-700">Current Workspace</h2>
@@ -188,7 +188,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* 專案區塊 */}
+      {/* Projects Section */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-6">
         <div className="flex justify-between items-center border-b pb-3">
           <h2 className="text-lg font-semibold text-gray-800">Projects</h2>
@@ -256,7 +256,7 @@ export default function DashboardPage() {
                       {project.id}
                     </span>
 
-                    {/* 編輯按鈕 (所有角色皆可編輯) */}
+                    {/* Edit button (Accessible by all roles) */}
                     <button
                       onClick={(e) => handleOpenEdit(project, e)}
                       className="text-xs font-medium text-gray-600 hover:text-blue-600 px-2 py-1 rounded hover:bg-gray-100 transition"
@@ -264,7 +264,7 @@ export default function DashboardPage() {
                       Edit
                     </button>
 
-                    {/* 刪除按鈕 (僅 Admin / Owner 可見) */}
+                    {/* Delete button (Only visible to Admin / Owner) */}
                     {canDelete && (
                       <button
                         onClick={(e) => handleDeleteProject(project.id, e)}
@@ -285,7 +285,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 編輯專案 Modal */}
+      {/* Edit Project Modal */}
       {editingProject && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl border border-gray-200 max-w-md w-full p-6 space-y-4">

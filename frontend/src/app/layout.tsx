@@ -8,7 +8,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    // 加上 suppressHydrationWarning 屬性
     <html lang="zh-TW" suppressHydrationWarning>
       <body>
         <Providers>

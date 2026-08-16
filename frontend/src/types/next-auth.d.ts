@@ -3,7 +3,7 @@ import { JWT } from "next-auth/jwt";
 
 declare module "next-auth" {
   /**
-   * 擴充 session.user 裡面的型別定義
+   * Extends the shape of `session.user`
    */
   interface Session {
     user: {
@@ -12,7 +12,7 @@ declare module "next-auth" {
   }
 
   /**
-   * 擴充 signIn/callbacks 時 user 物件的型別定義
+   * Extends the shape of `user` in signIn/callbacks
    */
   interface User extends DefaultUser {
     backendToken?: string;
@@ -21,7 +21,7 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   /**
-   * 擴充 NextAuth JWT token 物件的型別定義
+   * Extends the shape of NextAuth JWT token
    */
   interface JWT {
     backendToken?: string;

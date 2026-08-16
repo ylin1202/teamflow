@@ -22,29 +22,28 @@ function LoginContent() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-slate-50/50 px-4 overflow-hidden selection:bg-blue-500 selection:text-white">
-      {/* 🔮 背景柔和光暈（淺藍與靛藍） */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-tr from-blue-100/60 to-indigo-100/40 blur-[120px] rounded-full pointer-events-none" />
       <div className="absolute -bottom-10 right-1/4 w-96 h-96 bg-blue-50/80 blur-[100px] rounded-full pointer-events-none" />
 
-      {/* 登入主要卡片 */}
+      {/* Main Login Card */}
       <div className="relative z-10 max-w-md w-full backdrop-blur-md bg-white/90 border border-slate-200/80 p-8 sm:p-10 rounded-2xl shadow-xl shadow-slate-200/50">
         
-        {/* 品牌識別與標題 */}
+        {/* Brand Identity & Header */}
         <div className="text-center space-y-4">
           <div className="inline-flex items-center justify-center h-13 w-13 rounded-2xl bg-blue-600 text-white font-bold text-2xl shadow-md shadow-blue-500/20">
             T
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-              登入 <span className="text-blue-600">TeamFlow</span>
+              Sign in to <span className="text-blue-600">TeamFlow</span>
             </h1>
             <p className="mt-2 text-sm text-slate-500">
-              團隊協作與專案管理平台
+              Team Collaboration & Management Platform
             </p>
           </div>
         </div>
 
-        {/* 登入按鈕區塊 */}
+        {/* Sign In Button Section */}
         <div className="mt-8">
           <button
             onClick={handleGoogleSignIn}
@@ -73,25 +72,25 @@ function LoginContent() {
                 />
               </svg>
             )}
-            <span>{isLoading ? "正在連線至 Google..." : "使用 Google 帳號快速登入"}</span>
+            <span>{isLoading ? "Connecting to Google..." : "Continue with Google"}</span>
           </button>
         </div>
 
-        {/* 亮點特性標籤 */}
+        {/* Feature Highlights */}
         <div className="mt-8 pt-6 border-t border-slate-100 flex justify-center items-center gap-4 text-xs text-slate-500 font-medium">
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            多組織隔離
+            Multi-tenant Isolation
           </span>
           <span className="text-slate-300">•</span>
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-            RBAC 角色管理
+            RBAC Management
           </span>
           <span className="text-slate-300">•</span>
           <span className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-            Stripe 整合
+            Stripe Integration
           </span>
         </div>
       </div>

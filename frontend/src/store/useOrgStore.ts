@@ -7,10 +7,10 @@ export interface Organization {
   name: string;
   slug?: string;
   role?: string;
-  plan?: string; // 補上方案欄位 (e.g., 'FREE', 'PRO', 'ENTERPRISE')
+  plan?: string; // Plan tier field (e.g., 'FREE', 'PRO', 'ENTERPRISE')
 }
 
-// 1. 在介面宣告 fetchOrganizations 與 clearOrgState
+// Declare fetchOrganizations and clearOrgState in state interface
 interface OrgState {
   currentOrg: Organization | null;
   organizations: Organization[];
@@ -30,22 +30,21 @@ export const useOrgStore = create<OrgState>()(
 
       setOrganizations: (orgs) => set({ organizations: orgs }),
 
-      // 2. 實現抓取 Organizations 的邏輯
+      // Implement organization fetching logic
       fetchOrganizations: async () => {
         try {
-          // 修正這裡：加上 /me/ 匹配後端 urls.py
           const res = await api.get<Organization[]>("/api/organizations/me/");
           const orgs = res.data;
           set({ organizations: orgs });
 
-          // 關鍵：如果沒有 currentOrg，或是目前的 currentOrg 不在清單中，自動設為第一個 Org
+          // If no currentOrg is set, or if it is not present in the fetched list, default to the first organization
           const current = get().currentOrg;
           if (orgs && orgs.length > 0) {
             const exists = orgs.some((o) => o.id === current?.id);
             if (!current || !exists) {
               set({ currentOrg: orgs[0] });
             } else {
-              // 如果 currentOrg 已存在，順便更新其最新的 plan 資料
+              // If currentOrg already exists, sync it with the latest organization data (e.g., updated plan)
               const updatedCurrent = orgs.find((o) => o.id === current.id);
               if (updatedCurrent) {
                 set({ currentOrg: updatedCurrent });
@@ -57,13 +56,13 @@ export const useOrgStore = create<OrgState>()(
         }
       },
 
-      // 3. 實現登出時清空 State
+      // Reset state upon sign-out
       clearOrgState: () => {
         set({ currentOrg: null, organizations: [] });
       },
     }),
     {
-      name: "saas-org-storage", // localStorage 的 key
+      name: "saas-org-storage", // localStorage key
     }
   )
 );

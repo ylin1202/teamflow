@@ -28,7 +28,7 @@ interface OrgQuotaUsage {
   max_projects: number;
 }
 
-// 💡 方案對應的成員上限設定 (Free: 3 人, Pro/Enterprise: null 代表無限制)
+// Plan member limit configurations (Free: 3 members, Pro/Enterprise: null for unlimited)
 const PLAN_MEMBER_LIMITS: Record<string, number | null> = {
   FREE: 3,
   PRO: null,
@@ -47,7 +47,7 @@ export default function TeamPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  // 只有 OWNER 或 ADMIN 才能發送邀請、取消邀請與修改成員權限
+  // Only OWNER or ADMIN can send invitations, revoke invitations, and update member permissions
   const canManageTeam = currentOrg?.role === "OWNER" || currentOrg?.role === "ADMIN";
 
   const fetchTeamData = useCallback(async () => {
@@ -59,14 +59,14 @@ export default function TeamPage() {
         api.get<Invitation[]>("/api/invitations/"),
         api.get<OrgQuotaUsage>("/api/billing/project-usage/", {
           headers: { "X-Organization-ID": currentOrg.id },
-        }).catch(() => null), // 若失敗則降級處理
+        }).catch(() => null), // Gracefully handle failure
       ]);
 
       setMembers(membersRes.data);
       setInvitations(invitesRes.data.filter((inv) => !inv.is_accepted));
       if (quotaRes) setQuota(quotaRes.data);
     } catch (err) {
-      console.error("無法取得團隊資料", err);
+      console.error("Failed to fetch team data", err);
     } finally {
       setIsLoading(false);
     }
@@ -78,17 +78,17 @@ export default function TeamPage() {
     }
   }, [currentOrg, fetchTeamData]);
 
-  // 成員用量計算
+  // Member quota calculations
   const currentPlan = quota?.plan?.toUpperCase() || currentOrg?.plan?.toUpperCase() || "FREE";
-  const memberLimit = PLAN_MEMBER_LIMITS[currentPlan] ?? null; // null 表無上限
+  const memberLimit = PLAN_MEMBER_LIMITS[currentPlan] ?? null; // null indicates unlimited
   const activeCount = members.length;
   const pendingCount = invitations.length;
   const totalOccupied = activeCount + pendingCount;
   
-  // 是否已達上限 (僅針對有上限的方案)
+  // Check if member limit is reached (only applies to plans with limits)
   const isLimitReached = memberLimit !== null && totalOccupied >= memberLimit;
 
-  // 發送邀請
+  // Send invitation
   const handleSendInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim() || isLimitReached) return;
@@ -98,51 +98,51 @@ export default function TeamPage() {
       await api.post("/api/invitations/", { email, role });
       setEmail("");
       fetchTeamData();
-      alert("邀請函已成功發送！");
+      alert("Invitation sent successfully!");
     } catch (err: any) {
-      console.error("發送邀請失敗", err);
+      console.error("Failed to send invitation", err);
       const errMsg =
         err.response?.data?.detail ||
         err.response?.data?.error ||
-        "發送邀請失敗，請確認該 Email 是否已在團隊或已達配額上限。";
+        "Failed to send invitation. Please verify whether the email is already in the team or the quota limit has been reached.";
       alert(errMsg);
     } finally {
       setIsSending(false);
     }
   };
 
-  // 撤回邀請
+  // Revoke invitation
   const handleCancelInvite = async (id: string) => {
-    if (!window.confirm("確定要取消此邀請嗎？")) return;
+    if (!window.confirm("Are you sure you want to cancel this invitation?")) return;
     try {
       await api.delete(`/api/invitations/${id}/`);
       fetchTeamData();
     } catch (err) {
-      console.error("取消邀請失敗", err);
-      alert("取消邀請失敗");
+      console.error("Failed to cancel invitation", err);
+      alert("Failed to cancel invitation");
     }
   };
 
-  // 修改成員角色
+  // Update member role
   const handleUpdateRole = async (memberId: string, newRole: string) => {
     try {
       await api.patch(`/api/org-members/${memberId}/`, { role: newRole });
       fetchTeamData();
     } catch (err) {
-      console.error("修改角色失敗", err);
-      alert("修改權限失敗");
+      console.error("Failed to update role", err);
+      alert("Failed to update permissions");
     }
   };
 
-  // 移除成員
+  // Remove member
   const handleRemoveMember = async (memberId: string) => {
-    if (!window.confirm("確定要將此成員從團隊中移除嗎？")) return;
+    if (!window.confirm("Are you sure you want to remove this member from the team?")) return;
     try {
       await api.delete(`/api/org-members/${memberId}/`);
       fetchTeamData();
     } catch (err) {
-      console.error("移除成員失敗", err);
-      alert("移除成員失敗");
+      console.error("Failed to remove member", err);
+      alert("Failed to remove member");
     }
   };
 
@@ -156,7 +156,7 @@ export default function TeamPage() {
           </p>
         </div>
 
-        {/* 團隊用量小 Badge */}
+        {/* Team usage badge */}
         <div className="bg-white border rounded-xl px-4 py-2 text-xs font-medium shadow-sm flex items-center gap-3 w-fit">
           <span className="text-gray-500">Plan: <strong className="text-blue-600 uppercase">{currentPlan}</strong></span>
           <span className="text-gray-300">|</span>
@@ -167,7 +167,7 @@ export default function TeamPage() {
         </div>
       </div>
 
-      {/* 額度滿額警告 Banner */}
+      {/* Quota limit warning banner */}
       {canManageTeam && isLimitReached && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-800">
           <div className="text-xs">
@@ -187,7 +187,7 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* 1. 發送邀請區塊 */}
+      {/* 1. Invite Member Section */}
       {canManageTeam && (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-semibold text-gray-800 mb-4">Invite New Member</h2>
@@ -221,7 +221,7 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* 2. 待處理邀請 (Pending Invitations) 區塊 */}
+      {/* 2. Pending Invitations Section */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b pb-3">
           <h2 className="text-lg font-semibold text-gray-800">Pending Invitations</h2>
@@ -260,7 +260,7 @@ export default function TeamPage() {
         )}
       </div>
 
-      {/* 3. 正式成員 (Active Members) 區塊 */}
+      {/* 3. Active Members Section */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b pb-3">
           <h2 className="text-lg font-semibold text-gray-800">Active Members</h2>

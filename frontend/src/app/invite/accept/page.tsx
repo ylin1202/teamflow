@@ -1,4 +1,3 @@
-// invite/accept/page.tsx 完整修復版
 "use client";
 
 import { useEffect, useState, useRef, Suspense } from "react";
@@ -10,15 +9,15 @@ function AcceptInviteContent() {
   const router = useRouter();
   const token = searchParams.get("token");
 
-  const [statusMsg, setStatusMsg] = useState("正在處理您的團隊邀請...");
+  const [statusMsg, setStatusMsg] = useState("Processing your team invitation...");
   const [isError, setIsError] = useState(false);
   
-  // 用 useRef 防止 React StrictMode 觸發兩次 API
+  // Prevent React StrictMode from triggering the API twice using useRef
   const hasSubmitted = useRef(false);
 
   useEffect(() => {
     if (!token) {
-      setStatusMsg("無效或缺少邀請 Token。");
+      setStatusMsg("Invalid or missing invitation token.");
       setIsError(true);
       return;
     }
@@ -26,10 +25,10 @@ function AcceptInviteContent() {
     if (hasSubmitted.current) return;
     hasSubmitted.current = true;
 
-    // ENDPOINT 改為 /api/accept-invitation/
+    // Endpoint: /api/accept-invitation/
     api.post("/api/accept-invitation/", { token })
       .then((res) => {
-        setStatusMsg(`成功加入團隊「${res.data.organization_name}」！即將為您跳轉...`);
+        setStatusMsg(`Successfully joined team "${res.data.organization_name}"! Redirecting...`);
         setTimeout(() => {
           router.push("/dashboard");
         }, 2000);
@@ -37,7 +36,7 @@ function AcceptInviteContent() {
       .catch((err) => {
         setIsError(true);
         setStatusMsg(
-          err.response?.data?.error || err.response?.data?.detail || "接受邀請失敗，請確認是否已登入對應帳號。"
+          err.response?.data?.error || err.response?.data?.detail || "Failed to accept invitation. Please ensure you are logged into the corresponding account."
         );
       });
   }, [token, router]);
@@ -45,7 +44,7 @@ function AcceptInviteContent() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200 max-w-md w-full text-center space-y-4">
-        <h1 className="text-xl font-bold text-gray-800">團隊邀請驗證</h1>
+        <h1 className="text-xl font-bold text-gray-800">Team Invitation Verification</h1>
         <p className={`text-sm ${isError ? "text-red-600 font-medium" : "text-gray-600"}`}>
           {statusMsg}
         </p>
@@ -60,7 +59,7 @@ export default function AcceptInvitePage() {
       fallback={
         <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-200 max-w-md w-full text-center">
-            <p className="text-sm text-gray-600">載入邀請頁面中...</p>
+            <p className="text-sm text-gray-600">Loading invitation page...</p>
           </div>
         </div>
       }

@@ -19,7 +19,7 @@ const PLANS = [
     priceId: "",
     price: "$0",
     projectLimit: 5,
-    memberLimit: 3,
+    memberLimit: 3, // Team member limit: 3
     features: [
       "Up to 5 Projects",
       "Up to 3 Team Members",
@@ -33,7 +33,7 @@ const PLANS = [
     price: "$29",
     period: "/ one-time",
     projectLimit: 25,
-    memberLimit: null, // 人數無上限
+    memberLimit: null, // Unlimited members
     features: [
       "Up to 25 Projects",
       "Unlimited Team Members",
@@ -48,7 +48,7 @@ const PLANS = [
     price: "$50",
     period: "/ one-time",
     projectLimit: 150,
-    memberLimit: null, // 人數無上限
+    memberLimit: null, // Unlimited members
     features: [
       "Up to 150 Projects",
       "Unlimited Team Members",
@@ -62,7 +62,7 @@ function BillingContent() {
   const [usage, setUsage] = useState<OrgProjectUsage | null>(null);
   const [loadingPriceId, setLoadingPriceId] = useState<string | null>(null);
 
-  // 1. 抓取當前 Org 的 Project 數量與 Plan 資訊
+  // 1. Fetch current organization's project usage count and plan details
   const fetchUsage = useCallback(async () => {
     if (!currentOrg?.id || currentOrg.role !== "OWNER") return;
     try {
@@ -72,7 +72,7 @@ function BillingContent() {
       const res = await api.get<OrgProjectUsage>("/api/billing/project-usage/", config);
       setUsage(res.data);
     } catch (err) {
-      console.error("無法取得專案額度狀態", err);
+      console.error("Failed to fetch project quota status", err);
     }
   }, [currentOrg?.id, currentOrg?.role]);
 
@@ -80,7 +80,7 @@ function BillingContent() {
     fetchUsage();
   }, [fetchUsage]);
 
-  // 2. 監聽 Stripe 重導向網址帶有 ?success=true 時，自動刷新 Org Store 與用量
+  // 2. Listen for Stripe redirect URL containing ?success=true to refresh Org Store and usage data
   useEffect(() => {
     if (searchParams.get("success") === "true") {
       fetchUsage();
@@ -90,7 +90,7 @@ function BillingContent() {
     }
   }, [searchParams, fetchUsage, fetchOrganizations]);
 
-  // 權限控管：非 OWNER 角色顯示 Access Denied 畫面
+  // Access Control: Display Access Denied view for non-OWNER roles
   if (currentOrg && currentOrg.role !== "OWNER") {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4 text-center">
@@ -118,7 +118,7 @@ function BillingContent() {
     );
   }
 
-  // 3. 觸發 Stripe One-time Checkout
+  // 3. Trigger Stripe One-time Checkout
   const handleSubscribe = async (priceId: string) => {
     if (!priceId || !currentOrg?.id) return;
     setLoadingPriceId(priceId);
@@ -136,14 +136,17 @@ function BillingContent() {
         window.location.href = res.data.url;
       }
     } catch (err) {
-      console.error("建立 Checkout Session 失敗", err);
-      alert("無法啟動付款程序，請確認權限或 Stripe 設定。");
+      console.error("Failed to create Checkout Session", err);
+      alert("Unable to initiate checkout. Please check your permissions or Stripe configuration.");
     } finally {
       setLoadingPriceId(null);
     }
   };
 
+  // Critical resolution: Prioritize latest plan returned by usage API, fallback to currentOrg.plan
   const currentPlanKey = usage?.plan?.toUpperCase() || currentOrg?.plan?.toUpperCase() || "FREE";
+  
+  // Get current plan tier level (FREE=1, PRO=2, ENTERPRISE=3)
   const currentLevel = PLANS.find((p) => p.key === currentPlanKey)?.level || 1;
 
   const currentUsed = usage?.current_projects ?? 0;
@@ -166,7 +169,7 @@ function BillingContent() {
         </p>
       </div>
 
-      {/* 當前專案用量卡片 */}
+      {/* Current project usage card */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm flex flex-col justify-between gap-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -186,7 +189,7 @@ function BillingContent() {
           </div>
         </div>
 
-        {/* 專案數量進度條 */}
+        {/* Project usage progress bar */}
         <div className="border-t border-gray-100 pt-4">
           <div className="flex justify-between items-center text-xs text-gray-600 mb-1.5 font-medium">
             <span>Active Projects Usage</span>
@@ -204,7 +207,7 @@ function BillingContent() {
         </div>
       </div>
 
-      {/* 方案選擇矩陣 (Pricing Cards) */}
+      {/* Plan selection matrix (Pricing Cards) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {PLANS.map((plan) => {
           const isCurrent = currentPlanKey === plan.key;

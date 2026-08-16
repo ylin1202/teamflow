@@ -6,7 +6,7 @@ export default withAuth({
   },
 });
 
-// 只有 /dashboard 開頭的頁面需要登入防護
+// Protect only routes starting with /dashboard
 export const config = {
   matcher: ["/dashboard/:path*"],
 };

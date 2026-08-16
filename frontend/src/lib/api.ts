@@ -11,8 +11,8 @@ const api = axios.create({
 
 api.interceptors.request.use(
   async (config) => {
-    // 1. 取得 NextAuth Session Token
-    // 注意：在 Client-side 取得 session，儘可能減少不必要的 API blocking
+    // 1. Retrieve NextAuth Session Token
+    // Note: Fetch session on client-side to minimize unnecessary API blocking
     if (typeof window !== "undefined") {
       const session = await getSession();
       if (session?.user?.backendToken) {
@@ -20,7 +20,7 @@ api.interceptors.request.use(
       }
     }
 
-    // 2. 動態從 Zustand 抓取當前選取的 Organization ID
+    // 2. Dynamically retrieve currently selected Organization ID from Zustand store
     const currentOrg = useOrgStore.getState().currentOrg;
     if (currentOrg?.id) {
       config.headers["X-Organization-ID"] = currentOrg.id;

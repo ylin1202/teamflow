@@ -29,11 +29,10 @@ export default function Sidebar() {
               <Link
                 key={item.name}
                 href={item.href}
-                className={`flex items-center space-x-3 px-4 py-2.5 rounded-lg text-sm font-medium transition ${
-                  isActive
+                className={`flex items-center space-x-3 px-4 py-2.5 rounded-lg text-sm font-medium transition ${isActive
                     ? "bg-blue-50 text-blue-600"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                }`}
+                  }`}
               >
                 <span>{item.icon}</span>
                 <span>{item.name}</span>
@@ -43,8 +42,9 @@ export default function Sidebar() {
         </nav>
       </div>
 
-      <div className="p-4 border-t border-gray-100 text-xs text-gray-400 text-center">
-        v1.0.0 Multi-Tenant Engine
+      <div className="p-4 border-t border-gray-100 flex items-center justify-center gap-2 text-xs text-gray-400 font-mono">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+        <span>TeamFlow Core v1.0.0</span>
       </div>
     </aside>
   );
