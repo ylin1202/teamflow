@@ -11,7 +11,6 @@ from .billing import (
     CreateCheckoutSessionView,
     SubscriptionStatusView,
     ProjectQuotaUsageView,
-    CustomerPortalView,
 )
 from .workspace import (
     ProjectViewSet,
@@ -30,7 +29,6 @@ __all__ = [
     "CreateCheckoutSessionView",
     "SubscriptionStatusView",
     "ProjectQuotaUsageView",
-    "CustomerPortalView",
     "ProjectViewSet",
     "TaskViewSet",
     "DocumentViewSet",

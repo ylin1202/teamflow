@@ -20,7 +20,6 @@ from core.views import (
     OrganizationInvitationViewSet,
     CreateCheckoutSessionView,
     SubscriptionStatusView,
-    CustomerPortalView,
     TaskViewSet,
     DocumentViewSet,
     AcceptInvitationView,
@@ -47,7 +46,6 @@ api_patterns = [
     path("billing/checkout/", CreateCheckoutSessionView.as_view(), name="billing_checkout"),
     path("billing/subscription/", SubscriptionStatusView.as_view(), name="billing_subscription"),
     path("billing/project-usage/", ProjectQuotaUsageView.as_view(), name="project_quota_usage"),
-    path("billing/portal/", CustomerPortalView.as_view(), name="billing_portal"),
     
     # ViewSet Router endpoints (projects, tasks, documents, etc.)
     path("", include(router.urls)),

@@ -168,33 +168,3 @@ class ProjectQuotaUsageView(APIView):
             "current_projects": current_projects,
             "max_projects": max_projects,
         })
-
-
-class CustomerPortalView(APIView):
-    """
-    Creates a Stripe Customer Portal session for billing and invoice management.
-    """
-    permission_classes = [permissions.IsAuthenticated, IsOrganizationOwner]
-
-    def post(self, request):
-        org = getattr(request, "organization", None) or getattr(request.user, "organization", None)
-        if not org:
-            return Response({"error": "No organization associated with current user."}, status=status.HTTP_400_BAD_REQUEST)
-
-        customer_id = getattr(org, "stripe_customer_id", None)
-        if not customer_id:
-            return Response(
-                {"error": "No Stripe Customer ID found. Please complete a payment first."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
-            portal_session = stripe.billing_portal.Session.create(
-                customer=customer_id,
-                return_url=f"{frontend_url}/billing",
-            )
-            return Response({"url": portal_session.url})
-        except Exception as e:
-            logger.error(f"Failed to create Stripe portal session: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
