@@ -1,28 +1,27 @@
 version: '3.8'
 
 services:
-  # 1. MySQL 資料庫
+  # MySQL
   db:
     image: mysql:8.0
     container_name: saas_mysql
     restart: always
     environment:
-      MYSQL_DATABASE: saas_db
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_USER: saas_user
-      MYSQL_PASSWORD: saas_password
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    # 確保 DB 真的起好才開放連線
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # 2. Redis (用於分散式鎖)
+  # Redis
   redis:
     image: redis:7-alpine
     container_name: saas_redis
@@ -30,16 +29,19 @@ services:
     ports:
       - "6379:6379"
 
-  # 3. RabbitMQ (用於 Celery 異步佇列)
+  # RabbitMQ
   rabbitmq:
     image: rabbitmq:3-management
     container_name: saas_rabbitmq
     restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
     ports:
-      - "5672:5672"    # AMQP 協定端口, 這是 RabbitMQ 的資料傳輸通道
-      - "15672:15672"  # Web 管理介面端口 (帳密預設: guest / guest)
+      - "5672:5672"
+      - "15672:15672"
 
-  # 4. Django API Server 容器
+  # Django API Server
   web:
     build: ./backend
     container_name: saas_django
@@ -52,8 +54,12 @@ services:
       - ./backend/.env
     environment:
       - MYSQL_HOST=db
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - REDIS_URL=redis://redis:6379/0
       - RABBITMQ_HOST=rabbitmq
+      - CELERY_BROKER_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672//
     depends_on:
       db:
         condition: service_healthy
@@ -62,7 +68,7 @@ services:
       rabbitmq:
         condition: service_started
 
-  # 5. Celery Worker 背景任務容器
+  # Celery Worker (Async Email Delivery & Background Tasks)
   celery_worker:
     build: ./backend
     container_name: saas_celery
@@ -73,8 +79,12 @@ services:
       - ./backend/.env
     environment:
       - MYSQL_HOST=db
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - REDIS_URL=redis://redis:6379/0
       - RABBITMQ_HOST=rabbitmq
+      - CELERY_BROKER_URL=amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672//
     depends_on:
       db:
         condition: service_healthy
@@ -82,22 +92,25 @@ services:
         condition: service_started
       rabbitmq:
         condition: service_started
-  
-  # 6. Next.js 前端容器
+
+  # Next.js
   frontend:
     build: ./frontend
     container_name: saas_frontend
     command: npm run dev
     env_file:
-      - ./frontend/.env.local   # 告訴 Docker Compose 直接讀取 frontend/.env.local
+      - ./frontend/.env.local
+    tty: true
+    stdin_open: true
     volumes:
       - ./frontend:/app
-      - /app/node_modules  # 匿名 volume：隔離容器內的 node_modules，不讓本地影響容器
-      - /app/.next         # 匿名 volume：隔離編譯快取
+      - /app/node_modules
+      - /app/.next
     ports:
       - "3000:3000"
     depends_on:
-      - web
+      web:
+        condition: service_started
 
 volumes:
   mysql_data:
