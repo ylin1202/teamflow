@@ -1,6 +1,6 @@
 # Teamflow
 
-This project is a full-stack, multi-tenant team collaboration and project management SaaS platform. It uses a modern distributed microservices architecture — a Next.js 15 (App Router) + NextAuth frontend, and a backend built on Django REST Framework, RabbitMQ + Celery for asynchronous task queues, Redis for distributed caching/locking, and MySQL as the relational database. It natively implements UUIDv7 index optimization, row-level multi-tenant isolation, a simulated Stripe one-time-purchase and quota control system, and a webhook service backed by Redis distributed anti-concurrency locks with database-level idempotency checks.
+This project is a full-stack, multi-tenant team collaboration and project management SaaS platform. It uses a modern distributed microservices architecture — a Next.js (App Router) + NextAuth frontend, and a backend built on Django REST Framework, RabbitMQ + Celery for asynchronous task queues, Redis for distributed caching/locking, and MySQL as the relational database. It natively implements UUIDv7 index optimization, row-level multi-tenant isolation, a simulated Stripe one-time-purchase and quota control system, and a webhook service backed by Redis distributed anti-concurrency locks with database-level idempotency checks.
 
 ## Highlights
 
@@ -97,7 +97,7 @@ Checkout sessions can only be created by an organization Owner. After payment co
                      Celery Background Worker
                                 │
                                 ▼
-                 Asynchronous Welcome Email
+                     Asynchronous Welcome Email
 ```
 
 ## Performance Benchmark & Async Decoupling
